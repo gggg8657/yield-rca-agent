@@ -278,8 +278,9 @@ def sec_secom_auc(ev):
         f"{ev['protocol']['chronological']['n_train']} wafers and tests on the "
         f"last {ev['protocol']['chronological']['n_test']} "
         f"({ev['protocol']['chronological']['n_fail_test']} fails). "
-        f"{len(dropped)} of the {len(real)} non-trivial arms score lower there "
-        f"than under shuffled CV; `rf_all` falls from {rf['mean']:.3f} to "
+        + ("All " if len(dropped) == len(real) else f"{len(dropped)} of the ")
+        + f"{len(real)} non-trivial arms score lower there than under "
+          f"shuffled CV; `rf_all` falls from {rf['mean']:.3f} to "
         f"{ch['rf_all']['auc']:.3f}, and the whole field lands between "
         f"{ch[worst]['auc']:.3f} (`{worst}`) and {ch[best_ch]['auc']:.3f} "
         f"(`{best_ch}`). "

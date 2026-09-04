@@ -104,9 +104,9 @@ Every such decision here is a `fit` on the training fold:
   carry nothing and make standardisation ill-posed. Dropped, with the reason
   recorded per column in `SensorCleaner.dropped_`.
 - **Duplicated sensors.** Identical values *and* identical NaN pattern within
-  the fold. Left in, one physical signal's importance is split across several
-  identical names, which corrupts any top-k stability measurement before it
-  starts.
+  the fold; all but the first are dropped. Left in, one physical signal's
+  importance is split across several identical names, which corrupts any top-k
+  stability measurement before it starts.
 - **Near-duplicates.** The harder case, and the common one here: sensors that
   are near-identical without being identical. `CorrelatorAgent` groups them at
   its configured `corr_thresh` and reports one representative per group; the
@@ -136,7 +136,7 @@ The agent loop scores 0.717 [0.699, 0.735] while handing the final classifier 20
 
 The naive-selection control tells us how much of that is selection per se rather than this particular selector: univariate top-25 into the same forest is -0.029 [-0.041, -0.018] against the baseline, and the agent loop differs from *it* by -0.012 [-0.028, +0.004] -- an interval that straddles zero, so the plan/verify machinery buys no measurable accuracy over ranking each sensor on its own.
 
-The chronological column trains on the earliest 1097 wafers and tests on the last 470 (26 fails). 6 of the 6 non-trivial arms score lower there than under shuffled CV; `rf_all` falls from 0.759 to 0.532, and the whole field lands between 0.482 (`hgb_all`) and 0.585 (`univar_top25_rf`). That is close enough to chance to say the plain reading out loud: **forward in time, none of these models has much predictive power on SECOM.** Over the 1567 wafers of a 90-day campaign the sensor distributions drift, and a shuffled split quietly lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard scores -- but this column is the one that decides whether the thing is deployable.
+The chronological column trains on the earliest 1097 wafers and tests on the last 470 (26 fails). All 6 non-trivial arms score lower there than under shuffled CV; `rf_all` falls from 0.759 to 0.532, and the whole field lands between 0.482 (`hgb_all`) and 0.585 (`univar_top25_rf`). That is close enough to chance to say the plain reading out loud: **forward in time, none of these models has much predictive power on SECOM.** Over the 1567 wafers of a 90-day campaign the sensor distributions drift, and a shuffled split quietly lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard scores -- but this column is the one that decides whether the thing is deployable.
 <!-- END:secom_auc -->
 
 ![SECOM AUC by arm, with 95% confidence intervals](assets/fig_secom_auc.png)
