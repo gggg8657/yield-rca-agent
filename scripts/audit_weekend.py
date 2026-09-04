@@ -225,14 +225,61 @@ def claims(d):
                     f"{nfx['separation']['prob_real_max_exceeds_null_max']:.3f}"))
     # And the permutation side of the same-depth pair, so a mixed-protocol
     # subtraction would break the audit rather than read plausibly.
+    # Both alpha ladders of the permutation arm too. These were the two
+    # numbers I typed from estimate into WEEKEND.md's k=40 table (0.79 and
+    # 0.40, against the runs' 1.18 and 0.22) and the audit had no claim
+    # covering them, so it passed. Now it does not.
+    if nf and ab:
+        for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+            m = (ab.get("levels") or {}).get(key)
+            if m:
+                out += [
+                    (f"permutation control, k40 {key}", "abstain",
+                     f"{100 * m['null_abstention_heldout']:.1f}%"),
+                    (f"permutation suspects, k40 {key}", "abstain",
+                     f"{m['real_reported_mean']:.2f}"),
+                ]
     if nf5 and ab5:
         for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
             m = (ab5.get("levels") or {}).get(key)
             if m:
-                out.append((f"permutation control, k5 {key}", "abstain_k5",
-                            f"{100 * m['null_abstention_heldout']:.1f}%"))
+                out += [
+                    (f"permutation control, k5 {key}", "abstain_k5",
+                     f"{100 * m['null_abstention_heldout']:.1f}%"),
+                    (f"permutation suspects, k5 {key}", "abstain_k5",
+                     f"{m['real_reported_mean']:.2f}"),
+                ]
         out.append(("permutation separation, k5", "null_fdr_k5",
                     f"{nf5['separation']['prob_real_max_exceeds_null_max']:.3f}"))
+    # H7 (runs/attr_arm.json) and the PredictAllReportFew correction
+    # (runs/par_few.json), both added under the published CV protocol.
+    aa = d.get("attr_arm")
+    if aa:
+        out.append(("agent_model_rf AUC", "attr_arm",
+                    f"{aa['auc']['mean']:.3f} [{aa['auc']['ci_lo']:.3f}, "
+                    f"{aa['auc']['ci_hi']:.3f}]"))
+        for arm in ("rf_all", "univar_top25_rf", "agent_rf"):
+            pd_ = (aa.get("paired") or {}).get(f"{aa['arm']}__vs__{arm}")
+            if pd_:
+                out += [
+                    (f"H7 paired vs {arm}", "attr_arm",
+                     f"{pd_['mean']:+.4f} [{pd_['ci_lo']:+.4f}, "
+                     f"{pd_['ci_hi']:+.4f}]"),
+                    (f"H7 wilcoxon vs {arm}", "attr_arm",
+                     f"{pd_['wilcoxon_p']:.3f}"),
+                ]
+        out.append(("H7 n_selected", "attr_arm",
+                    f"{aa['n_selected_mean']:.1f}"))
+    pf = d.get("par_few")
+    if pf:
+        u = pf["per_arm"]["par_untuned"]["auc"]
+        dl = pf["paired_tuned_minus_untuned"]
+        out += [
+            ("par_untuned AUC", "par_few",
+             f"{u['mean']:.3f} [{u['ci_lo']:.3f}, {u['ci_hi']:.3f}]"),
+            ("par tuned - untuned", "par_few",
+             f"{dl['mean']:+.4f} [{dl['ci_lo']:+.4f}, {dl['ci_hi']:+.4f}]"),
+        ]
     if iv:
         t = iv["totals"]
         out += [
@@ -264,7 +311,8 @@ def main():
     names = ["secom_eval", "secom_stability", "null_fdr", "null_fdr_k5",
              "abstain", "abstain_k5", "null_fdr_rankers", "invariance",
              "null_fdr_k5_model", "abstain_k5_model",
-             "null_fdr_model", "abstain_model"]
+             "null_fdr_model", "abstain_model",
+             "attr_arm", "par_few"]
     d = {n: load(runs, n) for n in names}
     missing = [n for n in names if d[n] is None]
 

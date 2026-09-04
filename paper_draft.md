@@ -430,6 +430,69 @@ orthogonally, and any claim about "the pipeline's confidence" has to name which
 column and which depth it refers to. Our reporting code now pairs arms by depth
 and cannot cross them.
 
+### 5.6 The ceiling on a max-support threshold rule
+
+Running the same one-field change at the pre-registered depth does not
+replicate section 5.5 — it inverts it. Error control goes from 91.6% to 88.0%,
+a 3.6-point regression where the identical change at `select_k = 5` was a
+2.2-point gain. The reason is visible in the alpha ladder: the model-native arm
+reports **the same 88.0% control and 2.80 suspects at alpha = 0.05 and at
+alpha = 0.01**, while the permutation arm moves normally from 91.6% to 97.7%. A
+rate that has stopped responding to alpha is reporting a constraint, and the
+constraint is arithmetic rather than statistical.
+
+Bootstrap selection frequency is bounded above by 1. If some sensor is selected
+in every resample of a null replicate, that replicate's max-statistic equals
+1.000 exactly, and no threshold at or below 1.000 can exclude it. Writing
+`s_sat` for the share of null replicates in which this happens, the error
+control attainable by any rule of the form "report suspect *j* iff its support
+`s_j >= tau`" is bounded by
+
+    control <= 1 - s_sat,
+
+with no dependence on alpha. The bound is attained precisely when the fitted
+`tau` is itself pinned at 1.000; below that, control is `1 - P(null max >= tau)`
+and comes in under the ceiling because the replicates whose maximum lands in
+`[tau, 1.000)` are admitted.
+
+| arm | alpha | s_sat | implied cap | tau fitted | measured control |
+|---|---|---|---|---|---|
+| `select_k = 40`, permutation | 0.05 | 1.5% | 98.5% | 0.910 | 91.6% |
+| `select_k = 40`, model | 0.05 | 12.0% | 88.0% | 1.000 (pinned) | 88.0% |
+| `select_k = 40`, model | 0.01 | 12.0% | 88.0% | 1.000 (pinned) | 88.0% |
+| `select_k = 40`, model | 0.1 | 12.0% | 88.0% | 0.980 | 84.6% |
+| `select_k = 5`, model | 0.05 | 0.5% | 99.5% | 0.728 | 93.7% |
+
+The three rows of this paper that we had treated as separate findings are this
+one identity. Section 5.3's univariate baseline was capped at 88.5% under
+matched settings, and 11.5% of its null replicates saturated. Section 5.4's
+depth narrowing removed that cap by making saturation rare. Section 5.5's
+attribution swap helps at narrow depth and hurts at the pre-registered one. We
+had written the first as a property of that baseline and the third as a
+replication failure; both are the ceiling moving.
+
+The consequence for practice is a conjunction rather than a recommendation. The
+property that makes model-native attribution a better ranker — it is more
+repeatable across resamples, which is what earns it the 13 points of selection
+stability in section 7.1 — is the same property that pins a sensor in every
+resample of a null replicate and so raises `s_sat`. Attribution statistic and
+selection depth are therefore not independent knobs: a statistic repeatable
+enough to be worth using must be paired with a depth narrow enough to keep its
+null max-statistic off the ceiling, and either alone is a regression. We report
+this as the most transferable finding in the paper, because it applies to any
+stability-selection procedure calibrated by a max-statistic null, not only to
+the pipeline studied here.
+
+A methodological remark on how nearly we got this wrong in the other direction.
+Our first statement of the identity asserted that control is alpha-invariant
+whenever the cap binds, which is false: it is alpha-invariant only where `tau`
+pins, and the `alpha = 0.1` row above is the counterexample. The assertion was
+caught by a regression test written to guard the claim, which failed on that row
+within minutes of the claim being written. We mention it because the ceiling is
+the kind of clean result that invites over-statement, and the distinction
+between "the bound holds" and "the bound is attained" is exactly what a reader
+would need to reproduce it.
+
 ---
 
 ## 6. Are the suspects causal? A negative result with its power attached
@@ -527,43 +590,43 @@ fixed attribution statistic — held-out permutation importance — so they can 
 price the mechanisms. Reading the same measurement as a 2x2 over
 {bare ranker, full pipeline} x {permutation, model-native attribution} prices
 the statistic as well. `agent_model` is the identical pipeline with one
-configuration field changed; `rf_impurity` is the bare-ranker cell for the
-model-native statistic, since it ranks by essentially the quantity that setting
-averages, and `perm_only` is the bare-ranker cell for permutation because it is
-the attribution step with nothing after it. Top-5 selection stability over 200
-bootstrap replicates:
+configuration field changed, and `perm_only` and `model_only` are the pipeline's
+own attribution step under each statistic with nothing after it. Top-5 selection
+stability over 200 bootstrap replicates:
 
 |  | permutation attribution | model-native attribution | statistic is worth |
 |---|---|---|---|
-| bare ranker (attribution step only) | `perm_only` 20.0% | *[not measured]* | *[not measured]* |
+| bare ranker (attribution step only) | `perm_only` 20.0% | `model_only` 34.0% | +13.9 |
 | full pipeline | `agent` 22.3% | `agent_model` 35.3% | +13.0 |
-| architecture is worth | +2.3 | *[not measured]* | |
+| architecture is worth | +2.3 | +1.4 | |
 
-The asymmetry is the result. Changing the attribution statistic is worth +13.0
-points to the pipeline and makes it 2.8x cheaper (40.3 to 14.6 minutes); this
-cell is a single configuration field with everything else held identical.
+The asymmetry is the result, and it is consistent down both rows. Changing the
+attribution statistic is worth +13.9 points to the bare ranker and +13.0 to the
+full pipeline, and makes the pipeline 2.8x cheaper (40.3 to 14.6 minutes).
 Changing the architecture — screen, correlation grouping, bootstrap
-verification, drop — is worth +2.3 points over the permutation statistic, which
-lies inside one standard deviation of the replicate-to-replicate spread (15.2
-points). On this dataset the pipeline's selection stability is therefore much
-more nearly a function of which importance statistic it consumes than of the
-multi-agent structure arranged around it.
+verification, drop — is worth +2.3 points over the permutation statistic and
++1.4 over the model-native one. Both architecture deltas lie inside one standard
+deviation of the replicate-to-replicate spread (15.2 points), and the
+architecture costs 7.2x the runtime to buy the +1.4 (2.0 to 14.6 minutes). On
+this dataset the pipeline's selection stability is therefore much more nearly a
+function of which importance statistic it consumes than of the multi-agent
+structure arranged around it — though the structure's contribution is small and
+positive rather than absent.
 
-The model-native architecture cell is reported as unmeasured rather than
-estimated, and the reason is worth recording. We first filled it with
-`rf_impurity`, an off-the-shelf forest-impurity ranking, obtaining −1.1 points.
-An adversarial review rejected that substitution correctly: `rf_impurity` fits a
-500-tree forest with different leaf constraints over *every* cleaned sensor with
-no screening step, so subtracting it from `agent_model` prices the architecture
-together with a tree count and a candidate universe. The matched arm is the
-pipeline's own attribution step with the other statistic and nothing after it,
-and we construct it by calling the estimator's internal ranking method directly
-so that it cannot drift from the statistic the full pipeline consumes; a
-regression test asserts that driving the same helper with permutation
-attribution reproduces `perm_only` exactly. That arm was queued at the time of
-writing. Reporting a blank is not modesty here — a confounded subtraction in a
-table whose entire purpose is to separate two factors would be worse than no
-number.
+The bare-ranker cells are the pipeline's own attribution step with nothing after
+it, constructed by calling the estimator's internal ranking method so they
+cannot drift from the statistic the full pipeline consumes; a regression test
+asserts that the same helper driven with permutation attribution reproduces
+`perm_only` exactly. That construction matters more than it sounds. An earlier
+version of this table used an off-the-shelf forest-impurity ranking as the
+model-native bare cell and reported the architecture at −1.1 points, making it
+appear to help under one statistic and hurt under the other. An adversarial
+review rejected the substitution: that ranker fits a 500-tree forest with
+different leaf constraints over every cleaned sensor with no screening step, so
+subtracting it priced the architecture together with a tree count and a
+candidate universe. The matched arm reverses the sign. We record this because
+the correction runs in the architecture's favour and we would not want a reader
+to assume the corrections in this paper only run one way.
 
 This was run as a pre-registered prediction rather than as a sweep, which is why
 we report it as a decomposition rather than as a tuning result. The prediction —

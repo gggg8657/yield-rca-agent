@@ -773,10 +773,25 @@ def attribution_2x2(st):
                else ", one of which is outside that one-sd band")
             + f". Changing the statistic moves the number by "
               f"{abs(d_attr) / max(abs(d_arch_perm), abs(d_arch_model), 1e-9):.0f}x "
-              f"more than changing the architecture does. So on this dataset "
-              f"the loop's selection stability is close to a function of which "
-              f"importance statistic it consumes, and the plan/correlate/verify "
-              f"machinery around that statistic is approximately a no-op.", "",
+              f"more than changing the architecture does.", "",
+            f"Two things about the architecture row deserve saying plainly, "
+            f"one in each direction. It is **consistently positive** -- "
+            f"{d_arch_perm:+.1f} and {d_arch_model:+.1f}, the same sign under "
+            f"both statistics -- which is a better showing than an earlier "
+            f"version of this table gave it. That version used `rf_impurity` "
+            f"as the model-native bare cell and reported "
+            f"{v['agent_model'] - v['rf_impurity']:+.1f}, so it had the "
+            f"architecture helping under one statistic and "
+            f"hurting under the other; the matched arm reverses that sign, and "
+            f"the correction runs in the architecture's favour. But the size "
+            f"has not changed: both deltas sit inside one standard deviation "
+            f"of the replicate spread, and the architecture costs "
+            f"{w['agent_model'] / w['model_only']:.1f}x the runtime to buy "
+            f"{d_arch_model:+.1f} points ({w['model_only']:.1f} min to "
+            f"{w['agent_model']:.1f} min). Small, real-looking, and not worth "
+            f"its price is the fair summary -- not the stronger "
+            f"\"no-op in both directions\" this repository claimed before the "
+            f"matched cell existed.", "",
         ]
     else:
         body += [
@@ -1831,6 +1846,233 @@ def _fallback_reach_heldout(ab5):
     ]
 
 
+def _unpinned_example(unpinned, binding):
+    """The sharpest counterexample: same arm as a pinned row, tau below 1.000.
+
+    Pulled from the run rather than written into the prose, because the
+    paragraph it lands in is specifically about not quoting the cap as though
+    it were the measurement.
+    """
+    if not (unpinned and binding):
+        return None
+    pinned_labels = {b[0] for b in binding}
+    same = [u for u in unpinned if u[0] in pinned_labels]
+    if not same:
+        return None
+    lab, al, tau, ctl, cap = min(same, key=lambda u: u[1])
+    return (f" -- {lab.replace('`', '').replace('**', '')} at alpha = {al} "
+            f"fits tau = {tau:.3f} and controls at {pct(ctl)} against a "
+            f"{pct(cap)} ceiling")
+
+
+def sec_attr_auc(aa, ev):
+    """H7: does the attribution statistic close the loop's AUC deficit?
+
+    The loop loses 0.042 AUC to a full-sensor forest. H5 and H6 localised its
+    weakest component to the attribution statistic, so this asks the accuracy
+    question the same way. Prediction registered in `critique_log.md` Turn 11
+    before the run: the deficit is mostly the price of *sparsity* rather than of
+    ranking quality, so the swap lands near the naive-selection control's 0.730
+    and leaves a paired deficit whose CI excludes zero.
+    """
+    if not (aa and ev):
+        return []
+    a = aa["auc"]
+    pr = aa.get("paired") or {}
+    name = aa["arm"]
+    per = ev["auc"]["per_arm"]
+    rows = []
+    for arm in ("rf_all", "univar_top25_rf", "agent_rf"):
+        key = f"{name}__vs__{arm}"
+        if key not in pr or arm not in per:
+            continue
+        d = pr[key]
+        rows.append([f"`{arm}`", f"{per[arm]['mean']:.3f}",
+                     f"{d['mean']:+.4f} [{d['ci_lo']:+.4f}, {d['ci_hi']:+.4f}]",
+                     f"{d['wins']}/{d['losses']}",
+                     f"{d.get('wilcoxon_p', float('nan')):.3f}"])
+    if not rows:
+        return []
+    d_base = pr.get(f"{name}__vs__rf_all", {})
+    d_uni = pr.get(f"{name}__vs__univar_top25_rf", {})
+    d_ag = pr.get(f"{name}__vs__agent_rf", {})
+    old_def = ev["auc"]["paired"].get("agent_rf__vs__rf_all", {})
+    body = [
+        "### Does the attribution statistic close the AUC gap? (H7)", "",
+        f"One arm added under the published protocol -- `{name}`, the "
+        f"pre-registered loop with `attribution=\"model\"` and nothing else "
+        f"changed. The folds are byte-identical to `runs/secom_eval.json`'s "
+        f"(`RepeatedStratifiedKFold` is deterministic), so the deltas below "
+        f"are paired against that file's stored per-fold AUCs and nothing "
+        f"already published was recomputed.", "",
+        f"**`{name}` scores {a['mean']:.3f} [{a['ci_lo']:.3f}, "
+        f"{a['ci_hi']:.3f}].**", "",
+        table(rows, ["paired against", "its AUC", f"`{name}` minus it",
+                     "folds W/L", "Wilcoxon p"]), "",
+    ]
+    if d_base and d_uni and old_def:
+        body += [
+            f"**The deficit against the full-sensor forest shrinks but does "
+            f"not close:** {old_def['mean']:+.3f} for the permutation loop, "
+            f"{d_base['mean']:+.3f} "
+            f"[{d_base['ci_lo']:+.3f}, {d_base['ci_hi']:+.3f}] here, with the "
+            f"interval still excluding zero. And the arm now sits on top of "
+            f"the naive-selection control: {d_uni['mean']:+.4f} "
+            f"[{d_uni['ci_lo']:+.4f}, {d_uni['ci_hi']:+.4f}], Wilcoxon "
+            f"p = {d_uni.get('wilcoxon_p', float('nan')):.2f} -- "
+            f"indistinguishable from ranking each sensor on its own and "
+            f"keeping the top 25.", "",
+            f"That is the decomposition the accuracy question needed. The "
+            f"loop's {old_def['mean']:+.3f} splits into roughly "
+            f"{d_ag.get('mean', float('nan')):+.4f} of *recoverable ranking "
+            f"quality* and {d_base['mean']:+.3f} of *irreducible sparsity "
+            f"price* -- the latter being what any method paying for a 25-sensor "
+            f"budget owes on a dataset whose signal is spread thin. Swapping "
+            f"the statistic collects the first part and cannot touch the "
+            f"second. **So the loop's accuracy deficit is not fixable by any "
+            f"attribution statistic**, which was registered as the prediction "
+            f"and is a worse result for the architecture than the alternative "
+            f"would have been: under the competing explanation the deficit was "
+            f"bad ranking and therefore repairable.", "",
+        ]
+    if d_ag:
+        n_new = aa.get("n_selected_mean")
+        n_old = None
+        ns = [r.get("n_selected") for r in ev["records"]
+              if r["arm"] == "agent_rf" and r.get("n_selected") is not None]
+        if ns:
+            n_old = sum(ns) / len(ns)
+        cap = (ev.get("protocol", {}).get("agent_cfg", {}) or {}).get("max_select")
+        body += [
+            f"**Two reasons not to bank the {d_ag['mean']:+.4f} gain over the "
+            f"permutation loop, both of which cut the same way.** Its interval "
+            f"is [{d_ag['ci_lo']:+.4f}, {d_ag['ci_hi']:+.4f}] and its Wilcoxon "
+            f"p is {d_ag.get('wilcoxon_p', float('nan')):.3f}, so it is not "
+            f"established at the 0.05 level"
+            + (f". And it is not a sparsity-matched comparison: this arm "
+               f"selects {n_new:.1f} sensors per fold against the permutation "
+               f"loop's {n_old:.1f}"
+               + (f", which is its `max_select` cap of {cap} exactly -- the "
+                  f"arm is pinned against its own budget and would have taken "
+                  f"more"
+                  if cap and abs(n_new - cap) < 0.05 else "")
+               + f". Selection costs AUC monotonically on this dataset, so "
+                 f"part of the gain is simply less sparsity rather than better "
+                 f"ranking"
+               if (n_new and n_old) else "")
+            + ". Both caveats shrink the ranking-quality share of the deficit, "
+              "which makes the sparsity explanation stronger rather than "
+              "weaker.", "",
+            "The registered distrust check passes for the reason it was "
+            "written: an arm that reached the baseline by quietly abandoning "
+            "selection would be uninteresting, and this one stayed sparse.", "",
+        ]
+    return body
+
+
+def sec_saturation(pairs):
+    """The ceiling a max-support threshold rule cannot cross, and what sets it.
+
+    Three results in this repository turned out to be one mechanism, and it is
+    worth stating as an identity rather than as three coincidences. Bootstrap
+    selection frequency is bounded above by 1, so once a non-trivial share of
+    *null* replicates has some sensor selected in every resample, the null
+    max-statistic has an atom at 1.000 -- and no threshold at or below 1.000
+    can exclude those replicates. The error control any rule of this form can
+    reach is therefore capped at
+
+        1 - P(a null replicate saturates)
+
+    independent of alpha. The signature is that control stops responding to
+    alpha at all, which is directly visible in the table below.
+
+    ``pairs`` is a list of (label, null_fdr json, abstain json).
+    """
+    import numpy as np
+
+    rows, binding, unpinned = [], [], []
+    for label, nf_, ab_ in pairs:
+        if not (nf_ and ab_):
+            continue
+        recs = [r["max_stability"] for r in nf_.get("records", [])
+                if r["permuted"]]
+        lv = ab_.get("levels") or {}
+        if not recs or not lv:
+            continue
+        sat = float(np.mean(np.asarray(recs) >= 1.0))
+        cap = 1.0 - sat
+        for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+            m = lv.get(key)
+            if not m:
+                continue
+            ctl = m["null_abstention_heldout"]
+            nom = m["null_abstention_target"]
+            tau = m.get("tau_mean", float("nan"))
+            pinned = tau >= 0.999
+            rows.append([label, f"{m['alpha']}", pct(sat), pct(cap),
+                         f"{tau:.3f}" + (" **(pinned)**" if pinned else ""),
+                         pct(ctl), pct(nom)])
+            if pinned:
+                binding.append((label, m["alpha"], cap, ctl))
+            else:
+                unpinned.append((label, m["alpha"], tau, ctl, cap))
+    if not rows:
+        return []
+    body = [
+        "## The ceiling on any max-support threshold rule", "",
+        "Three findings in this repository are the same mechanism, and once "
+        "stated as an identity it predicts rather than describes. Bootstrap "
+        "selection frequency cannot exceed 1, so if some sensor is selected in "
+        "*every* resample of a null replicate, that replicate's max-statistic "
+        "is exactly 1.000 -- and no threshold at or below 1.000 excludes it. "
+        "The error control reachable by any rule of this form is therefore "
+        "capped at **1 - P(a null replicate saturates)**, with no dependence "
+        "on alpha at all.", "",
+        table(rows, ["arm", "alpha", "P(null saturates)", "implied cap",
+                     "tau fitted", "measured control", "nominal"]), "",
+    ]
+    if binding:
+        exact = [b for b in binding if abs(b[2] - b[3]) < 0.005]
+        body += [
+            f"The cap is an upper bound everywhere, and it is **attained** "
+            f"exactly where the fitted threshold has itself pinned at the top "
+            f"of the support scale: "
+            + "; ".join(f"{lab.replace('`', '').replace('**', '')} at "
+                        f"alpha = {al} caps at {pct(cap)} and measures "
+                        f"{pct(ctl)}"
+                        for lab, al, cap, ctl in exact[:2])
+            + ". The signature is unmistakable in those rows: they report "
+              "the *same* control at alpha = 0.05 and alpha = 0.01, because "
+              "once tau sits at 1.000, tightening alpha cannot move it.", "",
+            "The rows where tau is *not* pinned are what make the mechanism "
+            "precise rather than approximate, and they are worth reading "
+            "before quoting the cap as a prediction. Control is "
+            "1 - P(null max >= tau), so a tau below 1.000 admits the null "
+            "replicates whose maximum lands in [tau, 1.000) and control comes "
+            "in *below* the cap rather than at it"
+            + (_unpinned_example(unpinned, binding) or "")
+            + ". The cap therefore says what is unreachable, not what will be "
+              "reached. A first version of the test guarding this section "
+              "asserted alpha-invariance at every level and failed on exactly "
+              "that row; the assertion was stronger than the mechanism, and "
+              "the test now checks the pinned levels only.", "",
+            "**This is what makes the attribution result conditional rather "
+            "than general.** A more repeatable attribution statistic is more "
+            "likely to pin a sensor across every resample, so the property "
+            "that earns it +13.0 points of selection stability is the same "
+            "property that saturates its null max-statistic. Whether the swap "
+            "helps or hurts therefore depends entirely on whether the "
+            "selection depth is narrow enough to keep saturation rare. That is "
+            "not a caveat bolted onto the result; it is the result.", "",
+        ]
+    else:
+        body += [
+            "No arm in this table has a binding cap, so error control here is "
+            "limited by the calibration rather than by saturation.", "",
+        ]
+    return body
+
+
 def sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk=None):
     """H6: is the loop's error control limited by its attribution statistic?
 
@@ -2278,7 +2520,8 @@ def sec_invariance(iv):
     return body
 
 
-def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None):
+def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None,
+                  abm=None, nfm=None):
     """What to actually do with this, computed from what was measured.
 
     This section used to be hand-written, and by the time the false-discovery
@@ -2344,10 +2587,51 @@ def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None):
                 f"suspects ({pp['real_reported_mean']:.2f} to "
                 f"{mm['real_reported_mean']:.2f}), so it is not buying control "
                 f"by saying less.")
+        # ...but only at a depth that keeps the null max-statistic from
+        # saturating. At the pre-registered depth the same swap makes error
+        # control *worse*, and recommending it unconditionally would be
+        # recommending a regression.
+        flipped = False
+        if abm and (abm.get("levels") or {}).get("alpha_0.05") and ab:
+            mm40 = abm["levels"]["alpha_0.05"]
+            pp40 = ab["levels"]["alpha_0.05"]
+            d40 = 100 * (mm40["null_abstention_heldout"]
+                         - pp40["null_abstention_heldout"])
+            flipped = d40 < 0
+            if flipped:
+                sat = None
+                if nfm:
+                    import numpy as np
+                    mx = [r["max_stability"] for r in nfm.get("records", [])
+                          if r["permuted"]]
+                    if mx:
+                        sat = float(np.mean(np.asarray(mx) >= 1.0))
+                item += (
+                    f" **But only at a narrow selection depth.** Run the same "
+                    f"swap at the pre-registered `select_k = "
+                    f"{ab.get('protocol', {}).get('select_k', 40)}` and error "
+                    f"control goes the other way, "
+                    f"{pct(pp40['null_abstention_heldout'])} to "
+                    f"{pct(mm40['null_abstention_heldout'])} "
+                    f"({d40:+.1f} points)"
+                    + (f", because a more repeatable statistic saturates the "
+                       f"null max-statistic -- {pct(sat)} of null replicates "
+                       f"pin at 1.000 there, which caps control at "
+                       f"{pct(1 - sat)} for any threshold rule of this form "
+                       f"regardless of alpha (see the ceiling section above)"
+                       if sat is not None else "")
+                    + f". So the change to make is *both* fields together: "
+                      f"`attribution=\"model\"` **and** a depth narrow "
+                      f"enough to keep saturation rare. One without the other "
+                      f"is a regression.")
         item += (
             " Neither number reaches its target and the machinery around the "
-            "statistic still buys nothing measurable -- but if the loop is "
-            "kept, this is the change to make, and it costs a config edit.")
+            "statistic still buys nothing measurable"
+            + (" -- and the conditionality above is not a footnote, it is why "
+               "this is item 3 rather than item 1."
+               if flipped else
+               " -- but if the loop is kept, this is the change to make, and "
+               "it costs a config edit."))
         L.append(item)
     if rk and rk.get("per_ranker"):
         per = rk["per_ranker"]
@@ -2391,8 +2675,13 @@ def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None):
                 f"{d * 100:+.1f} points on its own"
                 + (", which is a larger effect than any ranker change "
                    "measured here and it is free." if abs(d) > 0.02 else
-                   ", so for this loop depth is not the lever it is for a "
-                   "univariate ranker."))
+                   ", so for this loop, holding the attribution statistic "
+                   "fixed, depth is not the lever it is for a univariate "
+                   "ranker. It is not inert, though, and item 3 is why: depth "
+                   "is what decides whether the attribution swap is a gain or "
+                   "a regression, by setting how often the null "
+                   "max-statistic saturates. Depth alone buys nothing; depth "
+                   "is the precondition for the thing that does."))
     L += [
         "**Believe the forward-in-time split, not the shuffled one.** For a "
         "go/no-go decision the shuffled-CV number is the optimistic one, and "
@@ -2512,6 +2801,7 @@ def build(runs: Path):
     rk = read_json(runs / "null_fdr_rankers.json")
     ab5 = read_json(runs / "abstain_k5.json")
     nf5 = read_json(runs / "null_fdr_k5.json")
+    aa = read_json(runs / "attr_arm.json")
     ab5m = read_json(runs / "abstain_k5_model.json")
     nf5m = read_json(runs / "null_fdr_k5_model.json")
     abm = read_json(runs / "abstain_model.json")
@@ -2520,6 +2810,7 @@ def build(runs: Path):
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
+    L += sec_attr_auc(aa, ev)
     L += sec_rolling(ev, prof)
     L += sec_drift(dr)
     L += sec_rolling_sweep(rsw, ev)
@@ -2530,9 +2821,15 @@ def build(runs: Path):
     L += sec_ranker_fdr(rk)
     L += sec_depth(ab, ab5, rk, nf, nf5)
     L += sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk)
+    L += sec_saturation([
+        ("agent, `select_k = 40`, permutation", nf, ab),
+        ("agent, `select_k = 40`, **model**", nfm, abm),
+        ("agent, `select_k = 5`, permutation", nf5, ab5),
+        ("agent, `select_k = 5`, **model**", nf5m, ab5m),
+    ])
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
-    L += sec_recommend(ev, ab, rk, ab5, st, ab5m)
+    L += sec_recommend(ev, ab, rk, ab5, st, ab5m, abm, nfm)
     L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
           "The failure mode this dataset invites is deciding *anything* from "

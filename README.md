@@ -261,6 +261,7 @@ Two perturbation schemes, and the choice matters more than any modelling decisio
 | `logreg_coef` | \|standardised logistic coefficient\| | 42.6% | 42.6% | 55.9% | 68.8% | 68.8% |
 | `rf_impurity` | random-forest impurity importance | 36.5% | 36.6% | 49.7% | 53.0% | 53.0% |
 | `agent_model` | full loop, model-native attribution instead of permutation | 35.3% | 35.6% | 47.9% | 46.6% | 46.8% |
+| `model_only` | SensorAgent only: screen + model-native importance | 34.0% | 34.0% | 47.3% | 45.7% | 45.7% |
 | `agent` | full agent loop: attribute -> correlate -> verify -> drop | 22.3% | 22.8% | 36.0% | 37.2% | 37.3% |
 | `agent_no_corr` | attribute -> verify -> drop, correlation grouping off | 22.1% | 22.6% | 35.0% | 35.7% | 35.9% |
 | `perm_only` | SensorAgent only: screen + held-out permutation AUC drop | 20.0% | 20.6% | 32.8% | 34.1% | 34.3% |
@@ -285,13 +286,15 @@ So verification is worth +2.1% of top-5 agreement and grouping +0.2%. Only one o
 
 |  | permutation attribution | model-native attribution | statistic is worth |
 |---|---|---|---|
-| **bare ranker** (attribution step only) | `perm_only` 20.0% | *[not measured]* | *[not measured]* |
+| **bare ranker** (attribution step only) | `perm_only` 20.0% | `model_only` 34.0% | +13.9 |
 | **full agent loop** | `agent` 22.3% | `agent_model` 35.3% | +13.0 |
-| **architecture is worth** | +2.3 | *[not measured]* |  |
+| **architecture is worth** | +2.3 | +1.4 |  |
 
 The clean cell is the bottom row: one configuration field, everything else identical, worth **+13.0 points** to the loop and a 2.8x speedup (40.3 min to 14.6 min). Against that, the whole architecture -- screen, correlation grouping, bootstrap verify, drop -- is worth +2.3 points over the permutation statistic, which is inside one standard deviation of the replicate-to-replicate spread (15.2 points).
 
-**The model-native column's architecture delta is deliberately blank.** Pricing it needs a bare ranker built the same way as `perm_only` but with the other statistic, and that arm (`model_only`) is queued rather than measured. `rf_impurity` is not a substitute for it: at 36.5% it is close, but it fits a 500-tree forest over every cleaned sensor with no screen, so the difference from `agent_model` is the architecture plus a tree count plus a candidate universe. A blank is the honest entry until the matched arm lands.
+With the matched bare cell measured, the architecture is worth +2.3 points in the permutation column and +1.4 in the model-native one, and both are inside that one-sd band. Changing the statistic moves the number by 6x more than changing the architecture does.
+
+Two things about the architecture row deserve saying plainly, one in each direction. It is **consistently positive** -- +2.3 and +1.4, the same sign under both statistics -- which is a better showing than an earlier version of this table gave it. That version used `rf_impurity` as the model-native bare cell and reported -1.1, so it had the architecture helping under one statistic and hurting under the other; the matched arm reverses that sign, and the correction runs in the architecture's favour. But the size has not changed: both deltas sit inside one standard deviation of the replicate spread, and the architecture costs 7.2x the runtime to buy +1.4 points (2.0 min to 14.6 min). Small, real-looking, and not worth its price is the fair summary -- not the stronger "no-op in both directions" this repository claimed before the matched cell existed.
 
 *This was run as a pre-registered prediction rather than a sweep.* `critique_log.md` Turn 8 predicted, before the run, that the swap would land near `rf_impurity`'s 36.5% and would not reach the 80% KPI; the competing explanation on record predicted it would stay near 22.3%. Both halves of the first prediction hold, and the miss against the KPI is still 44.7 points.
 
@@ -541,7 +544,7 @@ The measurements point at one configuration, and it is not the one that scores b
 1. **Predict with every sensor -- with one asterisk.** Under the shuffled protocol selection costs AUC monotonically, because the signal is diffuse, so `rf_all` at 0.759 is the model to deploy. The asterisk is that forward in time the ordering reverses and the sparse arms come out ahead; that comparison has 4 origins behind it and its interval includes zero, so it is a reason to monitor and re-measure as wafers accumulate, not a reason to ship the sparse model today.
 2. **Do not ship the suspect list without a null-calibrated bar.** As it stands the loop reports 20.9 suspects and abstains on nothing, and on permuted labels it does the same -- so the list length carries no information about the process. `AgentRCA(report_tau=...)` fixes that: at alpha = 0.05 the report becomes 0.60 sensors and is empty 51.3% of the time. Prediction is untouched either way, so this costs no AUC.
 3. **Consider replacing the ranking core with a univariate ranker.** `univariate (n_boot=40, select_k=5)` reaches 94.3% error control against the loop's 91.6% and reports 2.06 suspects against 0.60, without a permutation-importance pass, a correlation-grouping step or a verification loop. Two caveats on that comparison are in the section above -- the depth was probed for the baseline, and the separation column rewards repeatability -- so read this as the strongest available reason to try the swap and measure, not as a settled result.
-4. **Selection depth is not the lever here.** Dropping the loop's `select_k` from 40 to 5 moved its error control by -0.0 points on its own, so for this loop depth is not the lever it is for a univariate ranker.
+4. **Selection depth is not the lever here.** Dropping the loop's `select_k` from 40 to 5 moved its error control by -0.0 points on its own, so for this loop, holding the attribution statistic fixed, depth is not the lever it is for a univariate ranker. It is not inert, though, and item 3 is why: depth is what decides whether the attribution swap is a gain or a regression, by setting how often the null max-statistic saturates. Depth alone buys nothing; depth is the precondition for the thing that does.
 5. **Believe the forward-in-time split, not the shuffled one.** For a go/no-go decision the shuffled-CV number is the optimistic one, and the drift diagnostics say why: era is far more predictable from these sensors than failure is. Plan on retraining, and treat any fixed model as having a shelf life measured in weeks.
 6. **Treat the suspect list as a work order, not a diagnosis.** The invariance screen cannot certify any of these sensors as causal at this sample size, so the useful output is a shortlist of signal *families* worth an engineer's afternoon -- and, with the bar above in place, sometimes no shortlist at all.
 

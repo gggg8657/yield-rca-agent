@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
@@ -140,12 +141,16 @@ def test_agent_rca_recovers_planted_causes_on_synthetic():
     assert hits >= 2, f"recovered only {hits}/{len(causal)}"
 
 
+def _small_rca():
+    return AgentRCA(base="logreg", n_screen=30, select_k=10,
+                    stability_min=0.3, max_select=6, n_boot=4)
+
+
 def test_predict_all_report_few_predicts_with_every_sensor():
     """The recommended config: full-sensor prediction, loop-driven reporting."""
     X, y, names, _ = _small()
-    m = PredictAllReportFew(
-        rca=AgentRCA(base="logreg", n_screen=30, select_k=10,
-                     stability_min=0.3, max_select=6, n_boot=4)).fit(X, y)
+    m = PredictAllReportFew(predictor=make_logreg(),
+                            rca=_small_rca()).fit(X, y)
     p = m.predict_proba(X)
     assert p.shape == (len(y), 2) and np.allclose(p.sum(axis=1), 1.0)
     # the predictor sees the cleaned matrix, not the loop's shortlist
@@ -153,6 +158,62 @@ def test_predict_all_report_few_predicts_with_every_sensor():
     assert m.predictor_[-1].n_features_in_ == n_kept
     assert len(m.selected_original_) < n_kept
     assert m.report(names).startswith("# Yield Root-Cause Report")
+
+
+def test_predict_proba_is_invariant_to_the_loop():
+    """The half of the docstring's claim that *is* true by construction.
+
+    "Wrapping the loop around a predictor costs zero predictive performance"
+    is a structural claim, so it is checked structurally: two instances with
+    the same predictor and deliberately different loops -- different
+    attribution statistic, different depth, different bootstrap count, so
+    their shortlists differ -- must return bit-identical probabilities.
+
+    The other half of that claim, that the resulting AUC equals the baseline
+    row in the results, was *not* true and is not assertable: it depended on
+    the default predictor matching the measured arm's construction, which it
+    did not. `runs/par_few.json` measures what that was worth, and
+    `test_default_predictor_matches_the_measured_baseline` pins the alignment.
+    """
+    X, y, _, _ = _small()
+    pred = make_logreg()
+    a = PredictAllReportFew(predictor=pred, rca=_small_rca()).fit(X, y)
+    b = PredictAllReportFew(
+        predictor=pred,
+        rca=AgentRCA(base="logreg", attribution="model", n_screen=20,
+                     select_k=3, stability_min=0.9, max_select=3,
+                     n_boot=6)).fit(X, y)
+
+    assert not np.array_equal(a.selected_original_, b.selected_original_), \
+        "the two loops agreed, so this test would pass trivially"
+    assert np.array_equal(a.predict_proba(X), b.predict_proba(X)), \
+        "the loop reached predict_proba, so the loop is not predictively free"
+
+
+def test_default_predictor_matches_the_measured_baseline():
+    """The default predictor must be the construction `rf_all` measures.
+
+    The 0.759 baseline row comes from `scripts/arms.py::rf_all`, which tunes
+    `min_samples_leaf` by inner CV. `PredictAllReportFew` used to default to a
+    fixed `min_samples_leaf=5` forest while its docstring pointed at that row,
+    so the recommended artifact was not the measured one. This asserts the two
+    agree on everything that reaches the fitted model, and fails if either side
+    is retuned without the other.
+    """
+    import arms
+    from yieldrca.estimator import make_rf_tuned
+
+    default, _ = PredictAllReportFew()._make()
+    baseline = arms.rf_all()
+    assert isinstance(default, type(baseline))
+    assert default.param_grid == baseline.param_grid
+    assert default.scoring == baseline.scoring
+    assert (default.estimator["clf"].get_params()
+            == baseline.estimator["clf"].get_params())
+    assert (default.cv.n_splits, default.cv.shuffle, default.cv.random_state) \
+        == (baseline.cv.n_splits, baseline.cv.shuffle, baseline.cv.random_state)
+    # and the shared factory is what produces it, not a copy of the literals
+    assert make_rf_tuned().param_grid == default.param_grid
 
 
 # ------------------------------------------------------------ leakage canary

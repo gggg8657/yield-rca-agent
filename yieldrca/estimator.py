@@ -65,6 +65,43 @@ def make_hgb(learning_rate=0.05, max_leaf_nodes=15, max_iter=200, seed=0):
     )
 
 
+RF_BASELINE_GRID = {"clf__min_samples_leaf": [1, 5, 10]}
+
+
+def make_rf_tuned(n_estimators=500, max_features="sqrt", seed=0, n_splits=3):
+    """Median-impute -> random forest, ``min_samples_leaf`` chosen by inner CV.
+
+    This exists so that "predict with every sensor" means the *same* predictor
+    the results table measures. `scripts/arms.py`'s ``rf_all`` -- the arm the
+    0.759 baseline row comes from -- tunes ``min_samples_leaf`` over
+    {1, 5, 10} on each outer training fold. ``PredictAllReportFew`` used to
+    default to a fixed ``min_samples_leaf=5`` instead and its docstring claimed
+    its AUC was the baseline's "by construction", which was false: the loop
+    not touching ``predict_proba`` makes the *loop* free, it does not make an
+    untuned forest equal to a tuned one.
+
+    One difference from ``rf_all`` remains and is deliberate:
+    ``rf_all`` wraps ``SensorCleaner`` inside the grid search, while
+    ``PredictAllReportFew`` cleans once in its own ``fit``. Cleaning is
+    unsupervised and fitted on the training fold either way, so no test-fold
+    information crosses; the inner folds simply see a cleaner fitted on
+    slightly more rows than they own, which can only affect hyperparameter
+    choice and not the held-out estimate.
+    """
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import GridSearchCV, StratifiedKFold
+
+    pipe = Pipeline([
+        ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
+        ("clf", RandomForestClassifier(
+            n_estimators=n_estimators, max_features=max_features,
+            class_weight="balanced_subsample", n_jobs=1, random_state=seed)),
+    ])
+    return GridSearchCV(
+        pipe, RF_BASELINE_GRID, scoring="roc_auc", n_jobs=1, refit=True,
+        cv=StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed))
+
+
 def make_rf(n_estimators=500, min_samples_leaf=5, max_features="sqrt", seed=0):
     """Median-impute -> random forest. The strongest plain baseline on SECOM."""
     from sklearn.ensemble import RandomForestClassifier
@@ -333,11 +370,19 @@ class PredictAllReportFew(BaseEstimator, ClassifierMixin):
     all of them, while the loop runs alongside for its ranked,
     stability-scored suspect list.
 
-    Its held-out AUC is the full-sensor model's *by construction*: the loop
-    never touches ``predict_proba``. There is nothing to measure about that
-    number beyond the baseline row already in the results, which is the point
-    -- used this way the loop costs nothing predictive, and what it produces is
-    a work order rather than a claim.
+    **What is true by construction and what is not.** The loop never touches
+    ``predict_proba`` -- ``predict_proba`` reads ``predictor_`` and nothing
+    else -- so wrapping the loop around a predictor costs exactly zero
+    predictive performance. That much is structural and is asserted by a test.
+
+    What does *not* follow, and what an earlier version of this docstring
+    claimed anyway, is that this class's held-out AUC equals the baseline row
+    in the results. That holds only if its predictor is the same construction
+    as the arm that produced the row, and it was not: the default here was a
+    fixed ``min_samples_leaf=5`` forest, while `rf_all` tunes that parameter by
+    inner CV. The default is now :func:`make_rf_tuned`, which is the baseline's
+    construction, and `runs/par_few.json` measures what the difference was
+    worth so the correction is not just a wording change.
     """
 
     def __init__(self, predictor=None, rca=None):
@@ -345,10 +390,8 @@ class PredictAllReportFew(BaseEstimator, ClassifierMixin):
         self.rca = rca
 
     def _make(self):
-        pred = self.predictor if self.predictor is not None else Pipeline([
-            ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
-            ("clf", make_rf()[-1]),
-        ])
+        pred = (self.predictor if self.predictor is not None
+                else make_rf_tuned())
         return pred, (self.rca if self.rca is not None else AgentRCA(base="rf"))
 
     def fit(self, X, y):

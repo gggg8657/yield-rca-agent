@@ -344,3 +344,69 @@ def test_bare_ranker_cells_are_the_same_construction():
     m = ss._bare_rank(X, y, "model")
     assert set(m.tolist()) == set(a.tolist())
     assert not np.array_equal(m, a), "the two statistics should not coincide"
+
+
+# ------------------------------- the ceiling on a max-support threshold rule
+def test_saturation_caps_error_control_where_it_binds():
+    """control <= 1 - P(null replicate saturates), attained when it binds.
+
+    Bootstrap selection frequency is bounded above by 1, so a null replicate
+    with some sensor selected in every resample has max-statistic exactly
+    1.000 and no threshold at or below 1.000 excludes it. That makes the
+    reachable error control capped at 1 - P(saturation), with no dependence on
+    alpha -- which is why `select_k=40, attribution="model"` reports the same
+    88.0% at alpha = 0.05 and alpha = 0.01.
+
+    This is asserted rather than described because it is the mechanism that
+    makes the attribution recommendation conditional, and a future run that
+    broke the identity would silently invalidate that recommendation.
+    """
+    import json
+
+    pairs = [("null_fdr", "abstain"), ("null_fdr_model", "abstain_model"),
+             ("null_fdr_k5", "abstain_k5"),
+             ("null_fdr_k5_model", "abstain_k5_model")]
+    checked = 0
+    for nf_name, ab_name in pairs:
+        nf_p = ROOT / "runs" / f"{nf_name}.json"
+        ab_p = ROOT / "runs" / f"{ab_name}.json"
+        if not (nf_p.exists() and ab_p.exists()):        # pragma: no cover
+            continue
+        nf = json.loads(nf_p.read_text())
+        ab = json.loads(ab_p.read_text())
+        mx = np.asarray([r["max_stability"] for r in nf["records"]
+                         if r["permuted"]], dtype=float)
+        cap = 1.0 - float((mx >= 1.0).mean())
+        for key, lv in (ab.get("levels") or {}).items():
+            ctl = lv["null_abstention_heldout"]
+            # The bound itself, with a small slack for the split-half
+            # calibration measuring the cap on halves of the null.
+            assert ctl <= cap + 0.02, (
+                f"{nf_name}/{key}: control {ctl:.3f} exceeds the saturation "
+                f"cap {cap:.3f}, so the identity in RESULTS.md is wrong")
+            checked += 1
+        # And the alpha-invariance signature, stated precisely. The cap is an
+        # upper bound at every alpha, but it is *attained* only where the
+        # fitted threshold has itself pinned at the top of the support scale:
+        # control = 1 - P(null max >= tau), so tau < 1.000 admits the null
+        # replicates whose max lands in [tau, 1.000) and control drops below
+        # the cap. This test first asserted invariance across *all* alphas and
+        # failed on `null_fdr_model` at alpha = 0.1, where tau = 0.980 and
+        # control is 84.6% against an 88.0% cap -- the assertion was stronger
+        # than the mechanism. Restricted to the pinned levels, it holds.
+        lv = ab.get("levels") or {}
+        pinned = [k for k in lv if lv[k].get("tau_mean", 0.0) >= 0.999]
+        if len(pinned) > 1:
+            vals = {round(lv[k]["null_abstention_heldout"], 4)
+                    for k in pinned}
+            assert len(vals) == 1, (
+                f"{nf_name}: tau pins at 1.000 for {sorted(pinned)} but "
+                f"control still varies across them ({vals}), which the "
+                f"mechanism forbids -- once the threshold is at the ceiling, "
+                f"alpha cannot move it")
+            for k in pinned:
+                assert abs(lv[k]["null_abstention_heldout"] - cap) < 0.005, (
+                    f"{nf_name}/{k}: tau is pinned at 1.000 so control must "
+                    f"equal the cap {cap:.3f}, measured "
+                    f"{lv[k]['null_abstention_heldout']:.3f}")
+    assert checked >= 6, f"only {checked} (arm, alpha) pairs checked"

@@ -1198,3 +1198,348 @@ will say whether the estimator diagnosis holds at the pre-registered depth too
 — by now the default expectation in this repo should be that it might not, since
 two mechanism claims have already failed to generalise across these two depths.
 And `model_only`, behind it, for the matched bare-ranker cell.
+
+---
+
+## Turn 11 (2026-09-04) — a claim that was true for the wrong reason, and H7
+
+Two jobs held the 16-worker lease this turn (H6's `select_k = 40` leg, then
+`model_only` behind it), so this turn went to the part of the repo that needed
+no lease: auditing the artifact the recommendations actually point at.
+
+### `PredictAllReportFew` asserted an equality it had not earned
+
+Recommendations 1 and 2 together describe one deployable thing — predict with
+every sensor, report with the null-calibrated loop — and the repo ships it as
+`PredictAllReportFew`. Its docstring said:
+
+> Its held-out AUC is the full-sensor model's *by construction*: the loop never
+> touches ``predict_proba``. There is nothing to measure about that number
+> beyond the baseline row already in the results.
+
+The first clause is true and structural. The second does not follow from it,
+and the gap between them is a whole hyperparameter search. `predict_proba`
+reads `predictor_` and nothing else, so the *loop* is predictively free — but
+the default `predictor_` was
+
+    Pipeline([impute(median), RandomForestClassifier(min_samples_leaf=5, ...)])
+
+while `rf_all`, the arm the 0.759 baseline row comes from, is that forest
+wrapped in `GridSearchCV(min_samples_leaf ∈ {1, 5, 10}, cv=3,
+scoring=roc_auc)`. An untuned forest is not a tuned one. "The loop is free"
+had been silently extended to "therefore this equals the measured row", which
+is a different claim about a different component.
+
+This is the same failure shape as the last two I caught: an argument that is
+valid for one step, carried one step past where it holds. It is also the fourth
+of five recent errors here that no guardrail could have caught, because no
+number was stale — the number was simply never measured.
+
+### What it was worth: nothing, and I am reporting that as the result
+
+`scripts/eval_par_few.py`, 25 folds, `RepeatedStratifiedKFold(5 x 5, seed 0)`,
+the same protocol as `runs/secom_eval.json`, cleaning and imputation fitted on
+training rows only, `--jobs 1` so as not to oversubscribe the lease.
+
+The old default arm, `par_untuned`, lands at **0.759 [0.740, 0.778]** — against
+`rf_all`'s published 0.759 [0.739, 0.779]. So the docstring's *number* was
+right to three decimals while its *argument* was invalid. Tuning
+`min_samples_leaf` on this dataset buys essentially nothing, which is itself
+worth knowing and is not something the repo had established.
+
+I want to be exact about what that does and does not excuse. It does not
+retroactively justify the claim: an unmeasured equality that happens to hold is
+luck, and the next person to change the predictor default would have inherited
+a docstring asserting an equality that had stopped being true without anything
+failing. It does mean **no published number moves**, and I would rather report a
+correction worth 0.000 AUC honestly than dress it up as a save.
+
+**Fix, in three parts.** `yieldrca.estimator.make_rf_tuned` now holds the
+baseline predictor's construction in one place; `PredictAllReportFew` defaults
+to it, so the equality is true by construction rather than by coincidence; and
+`test_default_predictor_matches_the_measured_baseline` asserts the grid, the
+scoring, the inner-CV spec and every RF parameter agree with `arms.rf_all()`,
+so retuning either side without the other fails loudly. `arms.rf_all()` itself
+is deliberately **untouched** — it produced 0.759 and I am not editing the arm
+behind a published number to make a refactor tidier. A second test,
+`test_predict_proba_is_invariant_to_the_loop`, pins the half of the original
+claim that was always true, by fitting two instances with the same predictor
+and deliberately different loops (different statistic, depth and bootstrap
+count, so their shortlists provably differ) and asserting bit-identical
+probabilities.
+
+The `par_tuned` arm is still running; when it lands, the JSON will carry what
+the inner CV actually picked, which is the interesting residue of this.
+
+---
+
+## Turn 11, second half — H7, written before the run
+
+The AUC axis is the one the brief calls the interesting one — "the interesting
+claim is not the AUC, it is the delta over the obvious baseline" — and it is the
+one axis the attribution finding has never been tested on. Standing numbers:
+
+| arm | AUC | paired vs `rf_all` |
+|---|---|---|
+| `rf_all` | 0.759 [0.739, 0.779] | — |
+| `univar_top25_rf` | 0.730 [0.709, 0.750] | -0.029 [-0.041, -0.018] |
+| `agent_rf` | 0.717 [0.699, 0.735] | -0.042 [-0.058, -0.025] |
+
+H5 and H6 both say the attribution statistic is the loop's weakest component
+(+13.0 stability points, +2.2 error-control points). So does it close the
+-0.042?
+
+The reason to think not is already in the table, and it is why this prediction
+can be quantitative rather than directional. `univar_top25_rf` is a *good*
+ranker at the loop's own budget, and it still loses 0.029. That is the price of
+sparsity itself on this dataset, where the sweep shows selection costs AUC
+monotonically because the signal is diffuse. Better attribution can only
+recover the part of the deficit that is *bad ranking*, which the table bounds at
+roughly 0.042 - 0.029 = 0.013.
+
+> **H7.** The loop's AUC deficit is mostly the price of sparsity, not of
+> ranking quality. Running the pre-registered loop with `attribution="model"`
+> and nothing else changed will raise its AUC by roughly the 0.013 the table
+> leaves available — landing it **near `univar_top25_rf`'s 0.730, inside
+> [0.720, 0.745]** — and its paired delta against `rf_all` will **remain
+> negative with a 95% CI that excludes zero.**
+
+**What distinguishes H7 from the obvious alternative.** The alternative is that
+the deficit was a ranking-quality problem all along, which the last two
+confirmed hypotheses make a live possibility rather than a straw man. It
+predicts the loop reaches roughly 0.759 and its paired CI against `rf_all`
+covers zero. The two predictions are about 0.02 AUC apart, which is larger than
+the paired CI half-width on this protocol (~0.017 for the agent-vs-baseline
+delta), so 25 folds can resolve it.
+
+Also written down in advance, so a confirmation cannot be read as more than it
+is: **H7 confirming would mean the architecture's accuracy deficit is not
+fixable by any attribution statistic**, because the binding constraint would be
+the decision to select at all. That is a *worse* result for the loop than the
+ranking-quality explanation, not a better one — under it, the +13.0 stability
+and +2.2 error-control gains are real and the accuracy gap stays. And if the
+loop's AUC lands at 0.759, I should distrust it until I have checked that
+`selected_` has not quietly grown toward all 474 sensors, since a "selection"
+arm that stops selecting would reach the baseline trivially; `n_selected_mean`
+is recorded per fold for exactly that check.
+
+**Run:** `scripts/eval_attr_arm.py --jobs 16`, one arm, added *under* the
+published protocol rather than by re-running it — `RepeatedStratifiedKFold(5x5,
+seed 0)` is deterministic, so the folds are byte-identical to
+`runs/secom_eval.json`'s and the paired deltas are computed against that file's
+stored per-fold AUCs. Nothing already published is recomputed, so nothing
+already published can move. Queued third, behind H6's second leg and
+`model_only`.
+
+One note on that script, because the failure was mine and it is instructive:
+its first smoke run used `--splits 2` and cheerfully printed paired intervals
+against 2 of the reference file's 25 folds. It now requires the fold *sets* to
+be equal and refuses to pair otherwise. A reduced-fold invocation producing a
+confident-looking interval against a subset of a published arm is precisely the
+kind of comparison error this weekend keeps turning up, and this one I caught
+in my own smoke output rather than in a document.
+
+---
+
+## Turn 11, third part — H6 inverts at the pre-registered depth, and three findings collapse into one identity
+
+H6's second leg landed: `null_fdr.py --attribution model` at the pre-registered
+`select_k = 40`, priced by the same split-half calibration.
+
+| at `select_k = 40` | permutation | model-native |
+|---|---|---|
+| control, alpha = 0.1 | 82.0% | 84.6% |
+| control, alpha = 0.05 | **91.6%** | **88.0%** |
+| control, alpha = 0.01 | 97.7% | **88.0%** |
+| suspects, alpha = 0.1 | 1.18 | 3.05 |
+| suspects, alpha = 0.05 | 0.60 | 2.80 |
+| suspects, alpha = 0.01 | 0.22 | 2.80 |
+| separation | 0.873 | 0.940 |
+
+**H6 does not replicate at this depth — it inverts.** Control goes 91.6% to
+88.0%, a 3.6-point regression, where at `select_k = 5` the identical change was
+a 2.2-point gain. I had written before the run that it might not generalise,
+because two mechanism claims had already failed between exactly these two
+depths. That was the right prior and it is now three for three.
+
+### The tell, and the identity behind it
+
+The model column reports **88.0% control and 2.80 suspects at both alpha = 0.05
+and alpha = 0.01** — identical — while the permutation column moves normally
+(91.6% to 97.7%). A rate that stops responding to alpha is not noise, it is a
+constraint, and the constraint is arithmetic:
+
+Bootstrap selection frequency is bounded above by 1. If some sensor is selected
+in *every* resample of a null replicate, that replicate's max-statistic is
+exactly 1.000, and no threshold at or below 1.000 excludes it. So
+
+> **error control <= 1 - P(a null replicate saturates)**, with no dependence on
+> alpha at all.
+
+Measured: at `select_k = 40` with model attribution, **12.0%** of null
+replicates saturate, so the cap is **88.0%**, and the measured control is
+**88.0%** at both binding levels. Exact, to the precision reported. At
+`select_k = 5` only 0.5% saturate, the cap is 99.5%, nothing binds, and the
+better statistic is pure gain.
+
+**This is not a new mechanism. It is the one already in this repository, which I
+had filed as a quirk.** Turn 5 found `univariate` capped at 88.5% under matched
+settings because "its best sensor sits in the top slice of every resample, so
+the statistic pins at 1.000 on real labels and on 11.5% of permuted ones too" —
+and 1 - 0.115 = 0.885. Same arithmetic, different ranker, written up as a
+property of that baseline rather than of the rule. It is a property of the rule.
+Three findings — the univariate cap, the depth fix that removed it, and now the
+attribution reversal — are one identity, and stating it that way makes it
+predict instead of describe.
+
+And the connection to H5 is the uncomfortable part: **the property that earns
+model attribution +13 points of selection stability is that it is more
+repeatable, and being more repeatable is exactly what pins a sensor across every
+resample.** The mechanism that makes it a better ranker is the mechanism that
+saturates its null max-statistic. So the swap is not "good" or "bad"; it is good
+iff the depth keeps saturation rare. `RESULTS.md` recommendation 3 now reads
+*both fields together, or neither* — recommending the statistic alone would have
+been recommending a 3.6-point regression at the depth the repo ships.
+
+### The precision I had to walk back within the hour
+
+My first version of the guarding test asserted alpha-invariance at *every*
+level, and it failed on `null_fdr_model` at alpha = 0.1: tau = 0.980 there, not
+1.000, control 84.6% against an 88.0% cap. The cap is an upper bound always; it
+is *attained* only where the fitted threshold has itself pinned at the ceiling,
+because control is 1 - P(null max >= tau) and a tau below 1.000 admits the
+replicates whose maximum lands in [tau, 1.000). My assertion was stronger than
+the mechanism. The test now checks the pinned levels only, and `RESULTS.md`
+carries the unpinned row as the counterexample that makes the statement precise
+— generated from the run, not typed, because the paragraph is specifically
+about not quoting the cap as though it were the measurement.
+
+### `model_only` landed too, and it reverses a sign in the architecture's favour
+
+The matched bare-ranker cell codex demanded (Turn 10, finding 1) is measured:
+**34.0%**, 2.0 min. The 2x2 is now factorial:
+
+|  | permutation | model-native | statistic is worth |
+|---|---|---|---|
+| bare ranker | `perm_only` 20.0% | `model_only` **34.0%** | **+13.9** |
+| full loop | `agent` 22.3% | `agent_model` 35.3% | **+13.0** |
+| architecture is worth | +2.3 | **+1.4** | |
+
+The statistic is worth ~13 points in both rows and the architecture ~2 in both.
+**The confounded version had the model-native architecture cell at -1.1; the
+matched arm makes it +1.4.** So the correction codex forced runs *in the
+architecture's favour*: it is consistently positive under both statistics rather
+than helping under one and hurting under the other, and my "approximately a
+no-op in both directions" was wrong in the direction that flattered my own
+headline. I have retracted claims against this architecture four times this
+weekend and this is the first retraction that helps it, which is worth noting
+because the asymmetry would otherwise look like a pattern rather than the
+evidence.
+
+What did not change is the size: both deltas are inside one sd of the replicate
+spread (15.2 points), and the architecture costs **7.2x the runtime** to buy
++1.4 points (2.0 to 14.6 min). *Small, real-looking, and not worth its price* is
+the fair summary.
+
+### Two numbers I typed from estimate, and the guardrail that missed them
+
+Filling WEEKEND.md's `select_k = 40` alpha ladder I typed the permutation arm's
+suspect counts as 0.79 and 0.40. The runs say **1.18** and **0.22**.
+`audit_weekend.py` passed anyway, because it had no claim covering those two
+cells — the audit only checks numbers someone remembered to register, so its
+green light means "every registered number traces", not "every number traces".
+I caught these by reading the JSON before believing my own table.
+
+The audit now registers both full alpha ladders for both depths, 68 claims. But
+the general lesson is about the guardrail rather than the typo: **a
+registration-based audit cannot tell you about the number you forgot to
+register.** Its silence on a cell is not evidence. The two mitigations that
+actually scale are generating the table instead of typing it — which is why
+`RESULTS.md` has never had this class of error — and treating any hand-written
+table as unverified until each cell has been read back from a JSON.
+
+---
+
+## Turn 11, fourth part — H7 confirmed, and the AUC deficit decomposes
+
+`scripts/eval_attr_arm.py --jobs 16`, one arm under the published protocol,
+1.8 min → `runs/attr_arm.json`.
+
+**Prediction, registered before the run:** near `univar_top25_rf`'s 0.730,
+inside [0.720, 0.745], paired delta against `rf_all` still negative with a CI
+excluding zero.
+
+**Measured: 0.729 [0.710, 0.748].** Inside the interval, 0.001 from the named
+landmark.
+
+| paired against | its AUC | `agent_model_rf` minus it | Wilcoxon p |
+|---|---|---|---|
+| `rf_all` | 0.759 | **-0.0303 [-0.0474, -0.0132]** | 0.002 |
+| `univar_top25_rf` | 0.730 | -0.0009 [-0.0146, +0.0129] | 0.711 |
+| `agent_rf` | 0.717 | +0.0116 [-0.0006, +0.0237] | 0.071 |
+
+The deficit against the full-sensor forest goes -0.042 to **-0.030**, interval
+still excluding zero. And the arm lands exactly on the naive-selection control:
+p = 0.71, an interval centred on -0.001. With a decent attribution statistic,
+the whole plan/attribute/correlate/verify apparatus performs
+*indistinguishably from ranking each sensor on its own and keeping the top 25.*
+
+**The decomposition.** The loop's -0.042 is roughly +0.012 of recoverable
+ranking quality plus -0.030 of irreducible sparsity price. Better attribution
+collects the first and cannot touch the second, because the second is what any
+method paying for a 25-sensor budget owes on a dataset whose signal is spread
+across hundreds of weak sensors. **The accuracy deficit is not fixable by any
+attribution statistic.**
+
+I registered in advance that this is the *worse* outcome for the architecture,
+and I want to be clear that it still is. Under the competing explanation the
+deficit was bad ranking, and bad ranking is repairable. Under the confirmed one
+the binding constraint is the decision to select at all, which is the
+architecture's premise rather than a parameter in it. The three axes now read:
+the statistic is worth +13.0 stability points, +2.2 error-control points at
+narrow depth (-3.6 at the pre-registered one), and about +0.012 AUC that does
+not clear significance. Nothing recovers the accuracy gap.
+
+### Two reasons I am not banking the +0.012, both cutting against my own arm
+
+First, `p = 0.071` and the interval touches zero at -0.0006. Not established.
+
+Second, and I nearly missed this: the model arm selects **25.0** sensors per
+fold against the permutation loop's **19.8**, and 25.0 *is* `max_select`
+exactly. The arm is pinned against its own budget and would have taken more if
+allowed. Selection costs AUC monotonically here, so part of that +0.012 is
+simply less sparsity rather than better ranking, and the two arms are not
+sparsity-matched. My registered distrust check was aimed at growth toward all
+474 sensors, which did not happen — but it was aimed one order of magnitude too
+coarsely, and the interesting violation was sitting at the cap.
+
+Both caveats shrink the ranking-quality share and so make the sparsity
+explanation stronger. That is a case where every correction happens to favour
+the conclusion I predicted, which is exactly when I should say so out loud
+rather than let it pass: a sparsity-matched rerun (`max_select` raised for both
+arms, or lowered to 19 for the model arm) is the ablation this result now
+demands, and until it exists the +0.012 should be read as an upper bound on what
+attribution buys, not an estimate of it.
+
+### `PredictAllReportFew`: the correction was worth -0.002 AUC, and that is the finding
+
+`runs/par_few.json`, 25 folds, same protocol, 11.0 min at one worker.
+
+| arm | AUC |
+|---|---|
+| `par_untuned` (the old default, `min_samples_leaf=5` fixed) | 0.759 [0.740, 0.778] |
+| `par_tuned` (the new default, tuned by inner CV) | paired **-0.0021 [-0.0089, +0.0046]** |
+
+Tuning buys nothing measurable, and the JSON says why: across 25 folds the
+inner CV picked `min_samples_leaf` = 1 six times, 5 nine times and 10 ten
+times. It is genuinely indifferent between them, so the parameter the docstring's
+invalid argument skipped over turns out not to matter on this dataset.
+
+So: **the claim was unearned and correct.** The number it asserted (0.759) is
+what the arm measures; the argument for it was invalid; and the fix is worth
+-0.002 AUC with an interval covering zero. I am reporting the size of my own
+correction faithfully because the temptation in a log like this is to let a
+found-and-fixed inconsistency read as a save, and this one moved nothing. What
+it did buy is that the equality is now true by construction and asserted by a
+test, so the next person to retune either side gets a failure instead of a
+stale docstring.

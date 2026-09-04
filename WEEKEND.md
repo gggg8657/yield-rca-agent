@@ -44,6 +44,7 @@ only on the synthetic generator, where its premise is true by construction.
 | **the same, for a plain univariate ranker** | *[not measured]* | **94.3%**, reporting 2.06 suspects vs the loop's 0.60 | same **(new)** |
 | **top-5 stability, loop with model-native attribution** | *[not measured]* | **35.3%** — +13.0 points for one config field | `runs/secom_stability.json` **(new)** |
 | **error control, loop with model-native attribution** (`select_k = 5`) | *[not measured]* | **93.7%**, reporting 1.34 suspects | `runs/abstain_k5_model.json` **(new)** |
+| **SECOM AUC, loop with model-native attribution** | *[not measured]* | **0.729 [0.710, 0.748]**, still −0.030 [−0.047, −0.013] below `rf_all` | `runs/attr_arm.json` **(new)** |
 
 Nothing from Friday morning was re-run or revised. The two KPI verdicts stand:
 **AUC ≥ 0.75 met by the baseline, not by the agent loop; top-5 stability ≥ 80%
@@ -51,7 +52,7 @@ not met on any protocol.**
 
 ---
 
-## The seven new results
+## The nine new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -194,26 +195,32 @@ Read as a 2x2 rather than a ladder, this decomposes the loop:
 
 |  | permutation attribution | model-native attribution | statistic is worth |
 |---|---|---|---|
-| **bare ranker** (attribution step only) | `perm_only` 20.0% | *[not measured]* | *[not measured]* |
+| **bare ranker** (attribution step only) | `perm_only` 20.0% | `model_only` **34.0%** | **+13.9** |
 | **full agent loop** | `agent` 22.3% | `agent_model` 35.3% | **+13.0** |
-| **architecture is worth** | +2.3 | *[not measured]* | |
+| **architecture is worth** | +2.3 | **+1.4** | |
 
-The clean cell is the bottom row — one config field, everything else identical:
-**+13.0 points and a 2.8x speedup** (40.3 min → 14.6 min). Against that, the
-whole architecture (screen, correlation grouping, bootstrap verify, drop) is
-worth **+2.3** points over the permutation statistic, inside one standard
-deviation of the replicate-to-replicate spread (15.2 points).
+**The statistic is worth ~13 points in both rows; the architecture ~2 in
+both.** Swapping the statistic also makes the loop 2.8x faster (40.3 → 14.6
+min).
 
-The model-native architecture delta is blank on purpose. I first filled it with
-`rf_impurity` (36.5%) and got −1.1, and an adversarial review
-(`codex`, quoted in `critique_log.md` Turn 10) correctly rejected that:
+Two things about the architecture row, one in each direction. It is
+**consistently positive** — +2.3 and +1.4, same sign under both statistics.
+That is a better showing than the version of this table I published four hours
+ago, which used `rf_impurity` as the model-native bare cell and reported −1.1,
+making the architecture look like it helped under one statistic and hurt under
+the other. An adversarial review (`codex`, Turn 10) rejected that substitution:
 `rf_impurity` fits a 500-tree forest over every cleaned sensor with no screen,
-so subtracting it from `agent_model` prices the architecture *plus* a tree count
-*plus* a candidate universe. The matched arm — the loop's own attribution step
-with the other statistic and nothing after it — is now implemented
-(`model_only`, built from `AgentRCA._rank` so it cannot drift, with a test
-asserting its permutation twin reproduces `perm_only` exactly) and **queued
-behind H6**. Until it lands the cell is a blank, not an estimate.
+so subtracting it priced the architecture *plus* a tree count *plus* a candidate
+universe. The matched arm `model_only` — the loop's own attribution step with
+the other statistic and nothing after it, built from `AgentRCA._rank` so it
+cannot drift — has now landed and **reverses that sign in the architecture's
+favour.**
+
+But the size did not change. Both deltas sit inside one standard deviation of
+the replicate spread (15.2 points), and the architecture costs **7.2x the
+runtime** to buy +1.4 points (2.0 min → 14.6 min). *Small, real-looking, and
+not worth its price* is the fair summary — not the stronger "no-op in both
+directions" I wrote before the matched cell existed.
 
 The prediction was written down before the run (`critique_log.md`, Turn 8):
 "materially above 22.3%, landing near `rf_impurity`'s 36.5%, and will not reach
@@ -315,12 +322,113 @@ and two of those three columns are statistics *of* the bootstrap distribution.
 A 0.6-point gap is well inside what that difference could account for. Read it
 as *close*, not as either arm ahead.
 
-**So the headline narrows rather than reverses.** Not "the loop is beaten on
-every axis" but: the loop is not measurably *better* than a univariate ranker on
-any axis, and the version that comes closest costs a one-field config change the
-project had never tried. What the architecture adds on top of that statistic is
-still +2.3 points of stability — inside one sd — and nothing measurable on
-accuracy.
+### 7b. …and it reverses at the pre-registered depth. The mechanism is a ceiling.
+
+I wrote before the second leg ran that it might not replicate, since two
+mechanism claims had already failed to generalise between exactly these two
+depths. It did not replicate — **it inverted.** Same one-field swap, at
+`select_k = 40`:
+
+| at `select_k = 40` | permutation | model-native |
+|---|---|---|
+| control, α = 0.1 | 82.0% | 84.6% |
+| control, α = 0.05 | **91.6%** | **88.0%** |
+| control, α = 0.01 | 97.7% | **88.0%** |
+| suspects, α = 0.1 | 1.18 | 3.05 |
+| suspects, α = 0.05 | 0.60 | 2.80 |
+| suspects, α = 0.01 | 0.22 | 2.80 |
+| separation | 0.873 | 0.940 |
+
+Look at the model column's α = 0.05 and α = 0.01 rows: **identical**, 88.0% and
+2.80 both times, while the permutation column moves normally from 91.6% to
+97.7%. That tie is the tell, and it turns three scattered findings in this repo
+into one mechanism.
+
+**The ceiling.** Bootstrap selection frequency cannot exceed 1. If some sensor
+is selected in *every* resample of a null replicate, that replicate's
+max-statistic is exactly 1.000, and no threshold at or below 1.000 can exclude
+it. So error control under any rule of this form is capped at
+
+> **1 − P(a null replicate saturates)**
+
+with no dependence on α whatsoever. At `select_k = 40` with model attribution,
+**12.0%** of null replicates saturate → cap **88.0%** → measured **88.0%**, at
+both α levels. Exact. At `select_k = 5` only 0.5% saturate, the cap is 99.5%,
+nothing binds, and the better statistic is pure gain (93.7%).
+
+This is the same mechanism that capped the univariate ranker at 88.5% under its
+matched settings — a finding recorded here on Friday afternoon as if it were a
+quirk of that ranker. It is not: it is a property of the threshold rule, and
+**the property that earns model attribution +13 points of stability (it is more
+repeatable) is the very property that saturates its null max-statistic.**
+
+Full table, α-ladder and the non-binding rows in `RESULTS.md` §"The ceiling on
+any max-support threshold rule", with the identity pinned by a test.
+
+**So the headline narrows rather than reverses, and gains a condition.** Not
+"the loop is beaten on every axis" but: the loop is not measurably *better* than
+a univariate ranker on any axis; the version that comes closest costs a
+one-field config change the project had never tried; and that change is **only**
+an improvement at a selection depth narrow enough to keep the null
+max-statistic off its ceiling. At the pre-registered depth it is a 3.6-point
+regression. Recommendation 3 in `RESULTS.md` now says *both fields together, or
+neither*.
+
+### 8. The AUC deficit decomposes, and attribution cannot fix it (H7)
+
+The last axis. `attribution="model"` on the accuracy question, one arm added
+*under* the published protocol — the folds are byte-identical, so the deltas are
+paired against `runs/secom_eval.json`'s stored per-fold AUCs and nothing already
+published was recomputed.
+
+Predicted before the run: "near `univar_top25_rf`'s 0.730, inside
+[0.720, 0.745], paired delta against `rf_all` still negative with a CI excluding
+zero." **Measured 0.729 [0.710, 0.748].**
+
+| paired against | its AUC | `agent_model_rf` minus it | Wilcoxon p |
+|---|---|---|---|
+| `rf_all` (full-sensor forest) | 0.759 | **−0.0303 [−0.0474, −0.0132]** | 0.002 |
+| `univar_top25_rf` (naive selection, same budget) | 0.730 | −0.0009 [−0.0146, +0.0129] | 0.711 |
+| `agent_rf` (permutation attribution) | 0.717 | +0.0116 [−0.0006, +0.0237] | 0.071 |
+
+**The loop's −0.042 decomposes into ~+0.012 of recoverable ranking quality and
+−0.030 of irreducible sparsity price.** Better attribution collects the first
+and cannot touch the second, because the second is what *any* method paying for
+a 25-sensor budget owes on a dataset whose signal is spread across hundreds of
+weak sensors. And with a decent statistic the whole apparatus lands
+indistinguishably on top of "rank each sensor alone, keep 25" (p = 0.71).
+
+I registered in advance that this is the **worse** outcome for the architecture,
+and it is. Bad ranking is repairable; the decision to select at all is the
+premise, not a parameter.
+
+Two reasons not to bank the +0.012, both cutting against the arm: p = 0.071 is
+not significant, and the model arm selects **25.0** sensors per fold against
+19.8 — which is `max_select` exactly, so it is pinned at its own budget and
+would have taken more. Selection costs AUC monotonically here, so part of that
+gain is less sparsity rather than better ranking. **Read +0.012 as an upper
+bound on what attribution buys, not an estimate.** A sparsity-matched rerun is
+the ablation this now demands (see the decisions section).
+
+### 9. A claim that was true for the wrong reason, worth −0.002 AUC
+
+`PredictAllReportFew` is the artifact recommendations 1+2 describe. Its
+docstring said its AUC was the baseline row's "by construction, because the loop
+never touches `predict_proba`". The first clause is true and structural; the
+second does not follow, and the gap between them was a whole hyperparameter
+search — the default predictor had `min_samples_leaf` fixed at 5 while `rf_all`
+tunes it over {1, 5, 10}.
+
+Measured (25 folds, same protocol): the old default scores 0.759 [0.740, 0.778], and tuning is worth **−0.0021 [−0.0089, +0.0046]**. The inner
+CV picked `min_samples_leaf` = 1 six times, 5 nine times, 10 ten times across
+the folds — genuinely indifferent.
+
+**So the claim was unearned and correct.** I am reporting the size of my own
+correction faithfully rather than letting a found-and-fixed inconsistency read
+as a save: it moved nothing. What it bought is that the equality is now true by
+construction (`make_rf_tuned`, shared with no edit to `arms.rf_all`, which
+produced the published 0.759) and asserted by a test, so retuning either side
+now fails loudly instead of leaving a stale docstring.
 
 ---
 
@@ -447,38 +555,28 @@ is still open — it needs a call, not more measurement.
 
 ## Still running / how to check
 
-| job | started | expect | check |
-|---|---|---|---|
-| **H6, second leg** — the same `--attribution model` run at the pre-registered depth | ~22:05 Fri | `runs/null_fdr_model.json` + `runs/abstain_model.json` | `tail -5 runs/null_fdr_model.log`; done when it ends with `H6 DONE` |
+**Nothing is running.** Everything queued this session has landed: H6 at both
+depths, `model_only`, H7 and the `PredictAllReportFew` correction. `git status`
+is clean, `scripts/report.py --check` is in sync, `scripts/audit_weekend.py`
+traces 78 numeric claims in this file to 14 run JSONs, and 45 tests pass.
 
-**The `select_k = 5` leg has landed and is result 7 above (93.7%, confirmed).**
-The second leg runs the identical change at the pre-registered depth, because
-the one lesson from Turn 9 that survived is that a single operating point is
-never enough — and on this pipeline two mechanism claims have already failed to
-generalise between exactly these two depths. So the honest expectation is that
-it might not replicate, and if it does not, result 7's scope shrinks to
-`select_k = 5` rather than the claim being retracted.
+The one ablation the last result *demands*, for whoever picks this up:
+**a sparsity-matched rerun of H7.** `agent_model_rf` selects 25.0 sensors per
+fold against `agent_rf`'s 19.8, and 25.0 is `max_select` exactly, so the arm is
+pinned at its budget. Since selection costs AUC monotonically on this dataset,
+part of its +0.0116 AUC gain is less sparsity rather than better ranking, and
+the two arms are not matched on the thing this repo has shown matters most.
+Either raise `max_select` for both arms or drop it to 19 for the model arm:
 
-Nothing in the documents depends on it: `scripts/report.py` pairs arms by depth
-and only emits the pre-registered comparison once both of its JSONs exist, so
-the section will appear when the run lands and `--check` will flag `RESULTS.md`
-as stale until it is regenerated.
+```bash
+OMP_NUM_THREADS=1 ~/miniforge3/envs/pybamm-inv/bin/python \
+  scripts/eval_attr_arm.py --jobs 16 --out runs/attr_arm_matched.json
+# after editing max_select in scripts/arms.py AGENT_CFG, or adding a flag
+```
 
-| job | started | expect | check |
-|---|---|---|---|
-| **`model_only`** — the matched bare-ranker cell of the result-6 2x2 | queued behind H6 | fills the `*[not measured]*` blank in `runs/secom_stability.json` | `tail -3 runs/stability_model_only.log`; done when it ends with `MODEL_ONLY DONE` |
-
-`model_only` is the loop's own attribution step with model-native importance and
-nothing after it — the arm that makes the model-native column's architecture
-delta a matched subtraction instead of a confounded one. It waits on H6's
-completion marker rather than running alongside it, since both want the same 16
-workers. Once it lands, `scripts/report.py` fills the blank automatically and
-`--check` will flag `RESULTS.md` as stale until it is regenerated.
-
-Also queued, cosmetic: re-run `scripts/null_fdr_rankers.py --variants` so its
-JSON's own `leakage_control` field carries the corrected protocol text. The
-numbers are unaffected and `RESULTS.md` already states the corrected version
-from a verified literal. ~32 min.
+It takes about 2 minutes. Until it exists, **+0.012 is an upper bound on what
+attribution buys on accuracy, not an estimate**, and `RESULTS.md` says so where
+the number appears.
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
 (11 stages, CPU only, 16 workers). Tests: **41 collected, all green** as of the
