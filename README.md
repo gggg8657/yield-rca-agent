@@ -345,6 +345,7 @@ python scripts/drift.py           --jobs 16               # is it really drift?
 python scripts/rolling_sweep.py   --jobs 16               # reversal robustness
 python scripts/eval_synthetic.py  --seeds 10 --jobs 10    # ground-truth recovery
 python scripts/report.py                                  # RESULTS.md + README
+python scripts/make_figures.py                            # assets/*.png
 ```
 
 Using the loop directly:
@@ -358,7 +359,7 @@ X, y, names = load_secom("data")
 rca = AgentRCA(base="rf").fit(X, y)      # fit inside your own CV fold
 print(rca.report(names))                 # ranked survivors + stability
 print(rca.selected_original_)            # sensors that survived the drop
-print(rca.ranking())                      # the full reported ranking
+print(rca.ranking())                     # the full reported ranking
 
 # the configuration the results argue for: predict with everything,
 # report with the loop
