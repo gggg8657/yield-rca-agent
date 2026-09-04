@@ -1227,6 +1227,7 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None,
         per = rk["per_ranker"]
         ag_k = next((k for k in per if k.startswith("agent")), None)
         plain = {k: v for k, v in per.items() if not k.startswith("agent")}
+        _ = plain
         if ag_k and plain:
             def ctl(v):
                 return v["heldout_alpha_0.05"]["null_abstention_heldout"]
@@ -1830,6 +1831,148 @@ def _fallback_reach_heldout(ab5):
     ]
 
 
+def sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk=None):
+    """H6: is the loop's error control limited by its attribution statistic?
+
+    The depth comparison ruled depth out and the guard cross-tab ruled the
+    never-empty fallback out, which left the attribution estimator as the
+    binding constraint *by elimination*. Twice this weekend an
+    elimination argument here failed when tested directly, so it is tested
+    directly: `attribution="model"` and nothing else, at both depths, priced by
+    the same split-half calibration.
+
+    Every comparison below is within-protocol -- permutation against model at
+    the same ``select_k``, same ``n_boot``, same replicate counts. That matters
+    because the separation statistic moves a great deal with depth, so quoting
+    a k=40 separation next to a k=5 one would manufacture an effect.
+    """
+    pairs = [(5, nf5, ab5, nf5m, ab5m), ("pre-registered", nf, ab, nfm, abm)]
+    pairs = [(d, a, b, c, e) for d, a, b, c, e in pairs
+             if a and b and c and e]
+    if not pairs:
+        return []
+    body = ["### Ranker or estimator? (H6, the direct test)", "",
+            "`select_k` moved the loop's error control by less than half a "
+            "point and the never-empty guard provably never reaches the "
+            "calibrated report, which left the attribution estimator as the "
+            "constraint by elimination. This tests it directly: "
+            "`attribution=\"model\"`, nothing else changed, same split-half "
+            "calibration on both sides.", ""]
+    for depth, nfp, abp, nfm_, abm_ in pairs:
+        label = (f"`select_k = {depth}`" if depth != "pre-registered"
+                 else f"`select_k = {nfp['protocol']['agent_cfg']['select_k']}` "
+                      f"(pre-registered)")
+        rows = []
+        for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+            p_, m_ = abp["levels"].get(key), abm_["levels"].get(key)
+            if not (p_ and m_):
+                continue
+            rows.append([
+                f"alpha = {p_['alpha']} (target "
+                f"{pct(p_['null_abstention_target'], 0)})",
+                pct(p_["null_abstention_heldout"]),
+                pct(m_["null_abstention_heldout"]),
+                f"{p_['real_reported_mean']:.2f}",
+                f"{m_['real_reported_mean']:.2f}"])
+        if not rows:
+            continue
+        sep_p = nfp["separation"]["prob_real_max_exceeds_null_max"]
+        sep_m = nfm_["separation"]["prob_real_max_exceeds_null_max"]
+        best = max(rows, key=lambda r: 0)  # keep order; alpha_0.05 is rows[1]
+        a05p = abp["levels"]["alpha_0.05"]
+        a05m = abm_["levels"]["alpha_0.05"]
+        d_ctrl = 100 * (a05m["null_abstention_heldout"]
+                        - a05p["null_abstention_heldout"])
+        d_susp = a05m["real_reported_mean"] - a05p["real_reported_mean"]
+        body += [
+            f"**At {label}.**", "",
+            table(rows, ["", "control, permutation", "control, **model**",
+                         "suspects, permutation", "suspects, **model**"]), "",
+            f"Separation of the two worlds, same protocol: "
+            f"{sep_p:.3f} with permutation attribution, **{sep_m:.3f}** with "
+            f"model-native. At alpha = 0.05 control moves "
+            f"{d_ctrl:+.1f} points and the report gets "
+            f"{'longer' if d_susp > 0 else 'shorter'} by "
+            f"{abs(d_susp):.2f} suspects "
+            f"({a05p['real_reported_mean']:.2f} to "
+            f"{a05m['real_reported_mean']:.2f}), with real-label abstention "
+            f"going {pct(a05p['real_abstention'], 0)} to "
+            f"{pct(a05m['real_abstention'], 0)}.", "",
+        ]
+        if d_susp > 0 and d_ctrl > 0:
+            body += [
+                "Both columns move the right way at once, which is the part "
+                "that makes this a real improvement rather than a trade. A "
+                "rule can always buy error control by reporting less; this one "
+                "controls better *and* names more suspects, so it is ranking "
+                "better rather than abstaining more. That test was written "
+                "down before the run (`critique_log.md`, Turn 10): a "
+                "confirmation whose suspect count collapsed was to be "
+                "distrusted.", "",
+            ]
+    # Where this leaves the loop against the simplest thing that could work.
+    uni = None
+    if rk:
+        cands = [v for v in (rk.get("per_ranker") or {}).values()
+                 if v.get("is_variant") and v.get("select_k") == 5
+                 and v.get("ranker") == "univariate"]
+        if cands:
+            uni = max(cands, key=lambda v:
+                      v["heldout_alpha_0.05"]["null_abstention_heldout"])
+    if uni and ab5m:
+        u = uni["heldout_alpha_0.05"]
+        m = ab5m["levels"]["alpha_0.05"]
+        gap = 100 * (u["null_abstention_heldout"] - m["null_abstention_heldout"])
+        body += [
+            "**And against the univariate baseline, which is what the "
+            "conclusion rests on.** At matched depth and alpha = 0.05:", "",
+            table([
+                ["`univariate (n_boot=40, select_k=5)`",
+                 pct(u["null_abstention_heldout"]),
+                 f"{u['real_reported_mean']:.2f}",
+                 f"{uni['prob_real_max_exceeds_null_max']:.3f}"],
+                ["agent loop, model-native attribution, `select_k = 5`",
+                 pct(m["null_abstention_heldout"]),
+                 f"{m['real_reported_mean']:.2f}",
+                 f"{nf5m['separation']['prob_real_max_exceeds_null_max']:.3f}"],
+                ["agent loop, permutation attribution, `select_k = 5`",
+                 pct(ab5["levels"]["alpha_0.05"]["null_abstention_heldout"]),
+                 f"{ab5['levels']['alpha_0.05']['real_reported_mean']:.2f}",
+                 f"{nf5['separation']['prob_real_max_exceeds_null_max']:.3f}"],
+            ], ["arm", "no-cause worlds kept silent", "suspects reported",
+                "separation"]), "",
+            f"Swapping the statistic closes most of the error-control gap -- "
+            f"{gap:+.1f} points remain against the univariate arm, down from "
+            f"{100 * (u['null_abstention_heldout'] - ab5['levels']['alpha_0.05']['null_abstention_heldout']):+.1f} "
+            f"-- and closes the separation gap almost entirely. It does not "
+            f"close the report-length gap: the univariate arm still names "
+            f"{u['real_reported_mean']:.2f} suspects against "
+            f"{m['real_reported_mean']:.2f}.", "",
+            f"**One confound in that table, stated rather than buried.** The "
+            f"univariate arm resamples "
+            f"{uni.get('n_boot')} times and the loop "
+            f"{nf5m['protocol']['agent_cfg']['n_boot']}, so the three rows are "
+            f"matched on selection depth and calibration but not on bootstrap "
+            f"count. The depth was probed for the baseline and the bootstrap "
+            f"count comes with it. Two of the three columns here are "
+            f"statistics *of* the bootstrap distribution, so a longer "
+            f"bootstrap is not neutral, and the residual "
+            f"{gap:+.1f}-point control gap is inside the range that difference "
+            f"could plausibly account for. The honest reading is that at "
+            f"matched depth and unmatched bootstrap count the two arms are "
+            f"close on error control and separation, not that either is ahead.", "",
+            "So the conclusion narrows rather than reverses. The loop still "
+            "does not *beat* a univariate ranker on any axis measured here. "
+            "But the claim that it is comprehensively worse was resting on a "
+            "configuration whose attribution statistic was the weakest part of "
+            "it, and with that one field changed two of the three gaps are "
+            "small. What the loop buys for the remaining cost is still "
+            "nothing measurable, which is the finding; what it costs is now "
+            "much less than the pre-registered operating point suggested.", "",
+        ]
+    return body
+
+
 def sec_depth(ab, ab_k5, rk, nf=None, nf5=None):
     """Is it the ranker or the selection depth that limits error control?
 
@@ -2135,7 +2278,7 @@ def sec_invariance(iv):
     return body
 
 
-def sec_recommend(ev, ab, rk, ab5=None):
+def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None):
     """What to actually do with this, computed from what was measured.
 
     This section used to be hand-written, and by the time the false-discovery
@@ -2173,6 +2316,39 @@ def sec_recommend(ev, ab, rk, ab5=None):
             f"{mid['real_reported_mean']:.2f} sensors and is empty "
             f"{pct(mid['real_abstention'])} of the time. Prediction is "
             f"untouched either way, so this costs no AUC.")
+    # The single highest-value change measured in this repository, and it is
+    # one configuration field. Placed before the "replace the ranking core"
+    # item because it is strictly cheaper and moves both KPIs.
+    st_r = (st or {}).get("rankers") or {}
+    if "agent_model" in st_r and "agent" in st_r:
+        def _sv(n):
+            return 100 * st_r[n]["bootstrap"]["raw"]["pairwise_overlap"]
+        def _wv(n):
+            return st_r[n]["bootstrap"]["wall_min"]
+        item = (
+            f"**Change the attribution statistic first -- it is one field and "
+            f"it moves more than anything else measured here.** Setting "
+            f"`attribution=\"model\"` instead of held-out permutation "
+            f"importance raises top-5 selection stability from "
+            f"{_sv('agent'):.1f}% to {_sv('agent_model'):.1f}% "
+            f"({_sv('agent_model') - _sv('agent'):+.1f} points) and cuts the "
+            f"loop's runtime {_wv('agent') / _wv('agent_model'):.1f}x "
+            f"({_wv('agent'):.1f} min to {_wv('agent_model'):.1f} min).")
+        if ab5m and ab5 and (ab5m.get("levels") or {}).get("alpha_0.05"):
+            mm = ab5m["levels"]["alpha_0.05"]
+            pp = ab5["levels"]["alpha_0.05"]
+            item += (
+                f" At `select_k = 5` it also improves null error control from "
+                f"{pct(pp['null_abstention_heldout'])} to "
+                f"{pct(mm['null_abstention_heldout'])} while reporting *more* "
+                f"suspects ({pp['real_reported_mean']:.2f} to "
+                f"{mm['real_reported_mean']:.2f}), so it is not buying control "
+                f"by saying less.")
+        item += (
+            " Neither number reaches its target and the machinery around the "
+            "statistic still buys nothing measurable -- but if the loop is "
+            "kept, this is the change to make, and it costs a config edit.")
+        L.append(item)
     if rk and rk.get("per_ranker"):
         per = rk["per_ranker"]
         plain = {k: v for k, v in per.items() if not k.startswith("agent")}
@@ -2209,8 +2385,8 @@ def sec_recommend(ev, ab, rk, ab5=None):
         if a40:
             d = a5["null_abstention_heldout"] - a40["null_abstention_heldout"]
             L.append(
-                f"**Tune the bootstrap selection depth before tuning "
-                f"anything else.** Dropping the loop's `select_k` from "
+                f"**Selection depth is not the lever here.** "
+                f"Dropping the loop's `select_k` from "
                 f"{a40_k} to {a5_k} moved its error control by "
                 f"{d * 100:+.1f} points on its own"
                 + (", which is a larger effect than any ranker change "
@@ -2336,6 +2512,10 @@ def build(runs: Path):
     rk = read_json(runs / "null_fdr_rankers.json")
     ab5 = read_json(runs / "abstain_k5.json")
     nf5 = read_json(runs / "null_fdr_k5.json")
+    ab5m = read_json(runs / "abstain_k5_model.json")
+    nf5m = read_json(runs / "null_fdr_k5_model.json")
+    abm = read_json(runs / "abstain_model.json")
+    nfm = read_json(runs / "null_fdr_model.json")
     L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab, rk)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
@@ -2349,9 +2529,10 @@ def build(runs: Path):
     L += sec_abstain(ab)
     L += sec_ranker_fdr(rk)
     L += sec_depth(ab, ab5, rk, nf, nf5)
+    L += sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk)
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
-    L += sec_recommend(ev, ab, rk, ab5)
+    L += sec_recommend(ev, ab, rk, ab5, st, ab5m)
     L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
           "The failure mode this dataset invites is deciding *anything* from "

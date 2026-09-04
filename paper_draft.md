@@ -368,6 +368,68 @@ other than 0.0%, because these runs disable abstention by configuration
 which set each rate is computed over is not pedantry in systems of this shape,
 it is the difference between a result and an artifact.
 
+### 5.5 Ranker or estimator? The direct test
+
+Sections 5.3 and 5.4 eliminate two candidate explanations for the pipeline's
+error-control deficit: the selection depth, which moves it by less than half a
+point, and the never-empty guard, which provably never reaches the calibrated
+report. Elimination left the attribution estimator, and this project has twice
+had an elimination argument fail when the eliminated-to conclusion was finally
+tested. So we test it: `attribution="model"`, nothing else changed, priced by
+the same split-half calibration.
+
+| at `select_k = 5` | permutation | model-native | nominal |
+|---|---|---|---|
+| no-cause worlds kept silent, alpha = 0.1 | 84.8% | 85.8% | 90% |
+| no-cause worlds kept silent, alpha = 0.05 | 91.5% | 93.7% | 95% |
+| no-cause worlds kept silent, alpha = 0.01 | 97.5% | 98.2% | 99% |
+| suspects reported, alpha = 0.05 | 1.16 | 1.34 | — |
+| real-label abstention, alpha = 0.05 | 6.2% | 0.0% | — |
+| separation, same protocol | 0.982 | 0.994 | — |
+
+The prediction, recorded before the run, was control above 93.0% at this depth;
+the measurement is 93.7%. The competing explanation — that error control is
+capped by the variance of a 12-replicate bootstrap over roughly 65 failed
+wafers, irrespective of which statistic is replayed — predicted no movement and
+is refuted at all three levels.
+
+We also recorded in advance what would make us distrust a confirmation: a rule
+can always buy error control by reporting less, so a confirmation whose suspect
+count collapsed would be uninformative. It did the opposite at the two looser
+levels, reporting 1.34 suspects against 1.16 while controlling better, with
+real-label abstention falling to zero. At alpha = 0.01 the two arms tie at 0.90,
+so the report-length gain is confined to the looser levels and we do not claim
+it generally.
+
+Against the univariate baseline at matched depth and alpha = 0.05, the
+error-control gap narrows from 2.8 points to 0.6 and the separation gap from
+0.018 to 0.006, while the report-length gap does not close (2.06 against 1.34).
+One confound travels with that comparison and we state it rather than resolve
+it: the univariate arm resamples 40 times and the pipeline 12, and two of those
+three columns are statistics of the bootstrap distribution, so a 0.6-point
+control gap is inside what the difference in resampling could account for. The
+defensible reading is that the two arms are close on error control and
+separation at this depth, not that either leads.
+
+The consequence for the paper's claim is a narrowing rather than a reversal. We
+do not find the pipeline better than a univariate ranker on any axis we measure.
+But the configuration in which it is comprehensively worse is one whose
+attribution statistic is the weakest component of it, and a single field
+recovers most of two of the three gaps. What the multi-agent structure adds on
+top of that statistic remains within one standard deviation on stability and
+undetectable on accuracy, which is the finding; the cost of the structure is
+simply lower than the pre-registered operating point implied.
+
+A methodological note that generalises past this pipeline. Our first draft of
+this comparison quoted separation moving from 0.873 to 0.994, which would have
+been a mixed-protocol subtraction: 0.873 is the pipeline at `select_k = 40` and
+0.994 at `select_k = 5`. Within protocol the movement is 0.982 to 0.994, because
+depth alone had already moved separation by 11 points while moving error control
+by −0.1. Depth and statistic therefore act on these two columns almost
+orthogonally, and any claim about "the pipeline's confidence" has to name which
+column and which depth it refers to. Our reporting code now pairs arms by depth
+and cannot cross them.
+
 ---
 
 ## 6. Are the suspects causal? A negative result with its power attached

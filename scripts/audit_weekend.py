@@ -43,6 +43,8 @@ def claims(d):
     nf, nf5 = d.get("null_fdr"), d.get("null_fdr_k5")
     ab, ab5 = d.get("abstain"), d.get("abstain_k5")
     rk, iv = d.get("null_fdr_rankers"), d.get("invariance")
+    nf5m, ab5m = d.get("null_fdr_k5_model"), d.get("abstain_k5_model")
+    nfm, abm = d.get("null_fdr_model"), d.get("abstain_model")
     out = []
 
     if ev:
@@ -200,6 +202,37 @@ def claims(d):
         if "univariate" in per:
             out.append(("univariate matched separation", "null_fdr_rankers",
                         f"{per['univariate']['prob_real_max_exceeds_null_max']:.3f}"))
+    # H6: the same one-field change on the error-control axis. Both arms of
+    # every comparison come from the same depth, because mixing depths is how
+    # "separation 0.873 -> 0.994" nearly got written down.
+    for tag, nfx, abx in (("k5", nf5m, ab5m), ("k40", nfm, abm)):
+        if not (nfx and abx):
+            continue
+        for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+            m = (abx.get("levels") or {}).get(key)
+            if not m:
+                continue
+            out += [
+                (f"model attribution control, {tag} {key}",
+                 f"abstain{'_k5' if tag == 'k5' else ''}_model",
+                 f"{100 * m['null_abstention_heldout']:.1f}%"),
+                (f"model attribution suspects, {tag} {key}",
+                 f"abstain{'_k5' if tag == 'k5' else ''}_model",
+                 f"{m['real_reported_mean']:.2f}"),
+            ]
+        out.append((f"model attribution separation, {tag}",
+                    f"null_fdr{'_k5' if tag == 'k5' else ''}_model",
+                    f"{nfx['separation']['prob_real_max_exceeds_null_max']:.3f}"))
+    # And the permutation side of the same-depth pair, so a mixed-protocol
+    # subtraction would break the audit rather than read plausibly.
+    if nf5 and ab5:
+        for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+            m = (ab5.get("levels") or {}).get(key)
+            if m:
+                out.append((f"permutation control, k5 {key}", "abstain_k5",
+                            f"{100 * m['null_abstention_heldout']:.1f}%"))
+        out.append(("permutation separation, k5", "null_fdr_k5",
+                    f"{nf5['separation']['prob_real_max_exceeds_null_max']:.3f}"))
     if iv:
         t = iv["totals"]
         out += [
@@ -229,7 +262,9 @@ def main():
 
     runs = Path(a.runs)
     names = ["secom_eval", "secom_stability", "null_fdr", "null_fdr_k5",
-             "abstain", "abstain_k5", "null_fdr_rankers", "invariance"]
+             "abstain", "abstain_k5", "null_fdr_rankers", "invariance",
+             "null_fdr_k5_model", "abstain_k5_model",
+             "null_fdr_model", "abstain_model"]
     d = {n: load(runs, n) for n in names}
     missing = [n for n in names if d[n] is None]
 

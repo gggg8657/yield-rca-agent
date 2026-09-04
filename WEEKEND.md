@@ -43,6 +43,7 @@ only on the synthetic generator, where its premise is true by construction.
 | **error control the loop's confidence can reach** | *[not measured]* | **91.6%** (95% target) | `runs/null_fdr_rankers.json` **(new)** |
 | **the same, for a plain univariate ranker** | *[not measured]* | **94.3%**, reporting 2.06 suspects vs the loop's 0.60 | same **(new)** |
 | **top-5 stability, loop with model-native attribution** | *[not measured]* | **35.3%** — +13.0 points for one config field | `runs/secom_stability.json` **(new)** |
+| **error control, loop with model-native attribution** (`select_k = 5`) | *[not measured]* | **93.7%**, reporting 1.34 suspects | `runs/abstain_k5_model.json` **(new)** |
 
 Nothing from Friday morning was re-run or revised. The two KPI verdicts stand:
 **AUC ≥ 0.75 met by the baseline, not by the agent loop; top-5 stability ≥ 80%
@@ -50,7 +51,7 @@ not met on any protocol.**
 
 ---
 
-## The six new results
+## The seven new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -268,6 +269,59 @@ estimator by measurement rather than by elimination. Fixed in the generator,
 pinned by two new tests, and the full reasoning is in `critique_log.md` Turn 10.
 No headline number changes.
 
+### 7. The same one-field change, on the error-control axis (H6)
+
+Result 5 pinned the loop's error-control constraint to its attribution
+estimator **by elimination** — depth ruled out, then the guard ruled out (6b).
+This repo has twice had an elimination argument fail when tested directly, so it
+got tested directly. `attribution="model"`, nothing else, same 800 split-half
+calibrations.
+
+| at `select_k = 5` | permutation | **model-native** | target |
+|---|---|---|---|
+| control, α = 0.1 | 84.8% | **85.8%** | 90% |
+| control, α = 0.05 | 91.5% | **93.7%** | 95% |
+| control, α = 0.01 | 97.5% | **98.2%** | 99% |
+| suspects reported, α = 0.1 | 1.33 | **1.70** | — |
+| suspects reported, α = 0.05 | 1.16 | **1.34** | — |
+| suspects reported, α = 0.01 | 0.90 | 0.90 | — |
+| real-label abstention (α = 0.05) | 6.2% | **0.0%** | — |
+| separation, same protocol | 0.982 | **0.994** | — |
+
+**Predicted "above 93.0%" before the run. Measured 93.7%.** Note the α = 0.01
+row, which is the one that does not flatter it: the two arms tie at 0.90
+suspects there, so the report-length advantage is confined to the looser levels. The competing
+explanation — control capped by bootstrap variance over ~65 failed wafers
+regardless of the statistic — predicted no movement and is refuted.
+
+The pre-registered distrust check passes too: I said a confirmation whose
+suspect count collapsed below ~1.0 would mean it bought control by saying less.
+It went the other way — the report gets **longer** (1.16 → 1.34) while control
+improves and real abstention falls to zero. A report-less-to-control-more rule
+cannot move both columns the right way at once.
+
+**Against the univariate baseline** at matched depth, α = 0.05:
+
+| arm | control | suspects | separation |
+|---|---|---|---|
+| `univariate (n_boot=40, select_k=5)` | 94.3% | 2.06 | 1.000 |
+| agent loop, model-native, `select_k = 5` | 93.7% | 1.34 | 0.994 |
+| agent loop, permutation, `select_k = 5` | 91.5% | 1.16 | 0.982 |
+
+The control gap goes 2.8 points → 0.6 and the separation gap 0.018 → 0.006. The
+report-length gap does not close. **And that table has a confound I have to
+state rather than enjoy:** the univariate arm resamples 40 times, the loop 12,
+and two of those three columns are statistics *of* the bootstrap distribution.
+A 0.6-point gap is well inside what that difference could account for. Read it
+as *close*, not as either arm ahead.
+
+**So the headline narrows rather than reverses.** Not "the loop is beaten on
+every axis" but: the loop is not measurably *better* than a univariate ranker on
+any axis, and the version that comes closest costs a one-field config change the
+project had never tried. What the architecture adds on top of that statistic is
+still +2.3 points of stability — inside one sd — and nothing measurable on
+accuracy.
+
 ---
 
 ## What I tried that did not work, and what it rules out
@@ -395,26 +449,20 @@ is still open — it needs a call, not more measurement.
 
 | job | started | expect | check |
 |---|---|---|---|
-| **H6** — `null_fdr.py --attribution model` at `--select-k 5`, then at the pre-registered depth | ~21:25 Fri | `runs/null_fdr_k5_model.json`, `runs/null_fdr_model.json`, each priced into `runs/abstain_*_model.json` | `tail -5 runs/null_fdr_k5_model.log`; done when `runs/null_fdr_model.log` ends with `H6 DONE` |
+| **H6, second leg** — the same `--attribution model` run at the pre-registered depth | ~22:05 Fri | `runs/null_fdr_model.json` + `runs/abstain_model.json` | `tail -5 runs/null_fdr_model.log`; done when it ends with `H6 DONE` |
 
-H6 is the same one-field change as result 6, on the error-control axis instead
-of the stability axis. Result 5 pinned the loop's binding constraint on that
-axis to its attribution estimator **by elimination** — depth was ruled out, then
-the guard was ruled out (6b), so the estimator is what remains. This repo has
-twice this weekend had an elimination argument fail when tested directly, so it
-gets tested directly.
+**The `select_k = 5` leg has landed and is result 7 above (93.7%, confirmed).**
+The second leg runs the identical change at the pre-registered depth, because
+the one lesson from Turn 9 that survived is that a single operating point is
+never enough — and on this pipeline two mechanism claims have already failed to
+generalise between exactly these two depths. So the honest expectation is that
+it might not replicate, and if it does not, result 7's scope shrinks to
+`select_k = 5` rather than the claim being retracted.
 
-Prediction written down before the run (`critique_log.md`, Turn 10):
-**above 93.0% of no-cause worlds kept silent at `select_k = 5`**, up from the
-permutation arm's 91.5% and most of the way to the univariate arm's 94.3%. The
-competing explanation — that error control is capped by the bootstrap's own
-variance over ~65 failed wafers regardless of what is being replayed — predicts
-it lands within noise of 91.5%. Also written down in advance: if it clears 94.3%
-*and* its suspect count collapses under ~1.0, it bought silence rather than
-accuracy and the two columns must be read together.
-
-Both depths are being run, because the one lesson from Turn 9 that survived is
-that a single operating point is never enough.
+Nothing in the documents depends on it: `scripts/report.py` pairs arms by depth
+and only emits the pre-registered comparison once both of its JSONs exist, so
+the section will appear when the run lands and `--check` will flag `RESULTS.md`
+as stale until it is regenerated.
 
 | job | started | expect | check |
 |---|---|---|---|

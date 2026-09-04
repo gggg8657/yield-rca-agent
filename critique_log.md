@@ -1113,3 +1113,88 @@ is an adversary reading the arm definitions, which costs a subprocess.
 
 Two audit rows added in response, both of which encode a *comparison* rather
 than a number: the blank assertion above, and the per-split guard-reach count.
+
+---
+
+## Turn 10, fourth part — H6 verdict at `select_k = 5`: confirmed
+
+`scripts/null_fdr.py --null 200 --real 40 --jobs 16 --base rf --select-k 5
+--attribution model`, 240 agent-loop fits → `runs/null_fdr_k5_model.json`,
+priced by `scripts/abstain.py` → `runs/abstain_k5_model.json`. Same 800
+split-half calibrations, same replicate counts, `attribution` the only thing
+changed from the arm in `runs/null_fdr_k5.json`.
+
+| at `select_k = 5` | permutation | **model-native** | target |
+|---|---|---|---|
+| control, alpha = 0.1 | 84.8% | **85.8%** | 90% |
+| control, alpha = 0.05 | 91.5% | **93.7%** | 95% |
+| control, alpha = 0.01 | 97.5% | **98.2%** | 99% |
+| suspects reported, alpha = 0.05 | 1.16 | **1.34** | — |
+| real-label abstention, alpha = 0.05 | 6.2% | **0.0%** | — |
+| separation (same protocol) | 0.982 | **0.994** | — |
+
+**H6 predicted "above 93.0% at `select_k = 5`". Measured 93.7%.** The competing
+explanation — that error control is capped by the bootstrap's own variance over
+~65 failed wafers regardless of which statistic is being replayed, which
+predicted no movement from 91.5% — is refuted. Control improves at all three
+alpha levels, and the diagnosis reached by elimination in Turn 9 is now
+supported by direct measurement.
+
+**The distrust check I wrote down in advance passes.** I said a confirmation
+whose suspect count collapsed under ~1.0 would mean it had bought control by
+saying less rather than by ranking better. It went the other way: the report
+gets *longer* (1.16 → 1.34) while control improves, and real-label abstention
+falls to zero. Both columns move the right way at once, which a
+report-less-to-control-more rule cannot do.
+
+### One number I nearly got wrong, and the check that stopped me
+
+My first instinct was to write "separation goes 0.873 → 0.994". That would have
+been a mixed-protocol comparison: 0.873 is the loop at `select_k = 40` with
+`n_boot = 12` from `runs/null_fdr.json`, and 0.994 is `select_k = 5`. The
+within-protocol figure is 0.982 → 0.994, because **depth alone had already
+moved separation from 0.873 to 0.982** while moving control by −0.1 points.
+
+That is worth recording in its own right: depth is nearly inert on error control
+and worth 11 points of separation, so the two columns are not measuring the same
+thing and a claim about "the loop's confidence" has to say which. It is also the
+third comparison-shaped error I have come close to this weekend, and the reason
+it did not land in a document is that I looked up both protocol blocks before
+subtracting rather than after. The generator now takes both arms from the same
+protocol by construction (`report.sec_attribution_fdr` pairs runs by depth and
+refuses to cross them).
+
+### What this does to the headline, honestly
+
+It narrows it; it does not reverse it. Against the univariate baseline at
+matched depth and alpha = 0.05:
+
+| arm | control | suspects | separation |
+|---|---|---|---|
+| `univariate (n_boot=40, select_k=5)` | 94.3% | 2.06 | 1.000 |
+| agent loop, model-native, `select_k = 5` | 93.7% | 1.34 | 0.994 |
+| agent loop, permutation, `select_k = 5` | 91.5% | 1.16 | 0.982 |
+
+The error-control gap goes from 2.8 points to 0.6 and the separation gap from
+0.018 to 0.006. The report-length gap does not close: 2.06 against 1.34.
+
+And the comparison still has a confound I have to state rather than enjoy: the
+univariate arm resamples 40 times and the loop 12. Two of those three columns
+are statistics *of* the bootstrap distribution, so a longer bootstrap is not
+neutral, and a 0.6-point control gap is well inside what that difference could
+account for. The honest reading is **close, not ahead** — for either arm. It is
+in `RESULTS.md` next to the table.
+
+So the standing claim changes from "the loop is beaten on every axis" to: the
+loop is not measurably *better* than a univariate ranker on any axis, and the
+version of it that comes closest costs a one-field config change that the
+project had never tried. Everything the architecture adds on top of that
+statistic is still worth about +2.3 points of stability, inside one sd, and
+nothing measurable on accuracy. That is a smaller, better-supported claim than
+the one I published this morning.
+
+**Still queued:** the `select_k = 40` leg of the same run (in flight), which
+will say whether the estimator diagnosis holds at the pre-registered depth too
+— by now the default expectation in this repo should be that it might not, since
+two mechanism claims have already failed to generalise across these two depths.
+And `model_only`, behind it, for the matched bare-ranker cell.
