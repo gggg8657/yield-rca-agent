@@ -73,12 +73,27 @@ def permutation_importance(model, X, y, metric, n_repeats=5, seed=0):
 
 
 def roc_auc(y, s):
-    """Rank-based AUC, no sklearn needed."""
-    pos, neg = s[y == 1], s[y == 0]
-    if len(pos) == 0 or len(neg) == 0:
+    """Rank-based AUC, no sklearn needed. Ties get their average rank.
+
+    The tie handling is not a nicety: a classifier that outputs one constant
+    score must score exactly 0.5, and with plain ``argsort`` ranks it scores
+    0.0 or 1.0 depending on how the input happened to be ordered.
+    """
+    y = np.asarray(y)
+    s = np.asarray(s, dtype=float)
+    n_pos, n_neg = int((y == 1).sum()), int((y == 0).sum())
+    if n_pos == 0 or n_neg == 0:
         return 0.5
-    order = np.argsort(np.concatenate([pos, neg]))
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(order) + 1)
-    r_pos = ranks[: len(pos)].sum()
-    return (r_pos - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg))
+    order = np.argsort(s, kind="mergesort")
+    ranks = np.empty(len(s), dtype=float)
+    ranks[order] = np.arange(1, len(s) + 1, dtype=float)
+    # average the ranks within each group of equal scores
+    ss = s[order]
+    start = 0
+    for i in range(1, len(ss) + 1):
+        if i == len(ss) or ss[i] != ss[start]:
+            if i - start > 1:
+                ranks[order[start:i]] = ranks[order[start:i]].mean()
+            start = i
+    r_pos = ranks[y == 1].sum()
+    return float((r_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))

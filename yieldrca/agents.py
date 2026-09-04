@@ -1,9 +1,12 @@
 """Role-specialized agents for yield root-cause analysis.
 
 The pattern mirrors a Planner / worker / Critic multi-agent system: each
-agent owns one tool and one question. The Orchestrator (pipeline.py) routes
-between them. The LLM Reporter is optional — with no API key it emits a
-deterministic templated report, so the pipeline never hard-depends on a model.
+agent owns one tool and one question, and the Orchestrator (pipeline.py)
+routes between them. The agents are **deterministic tool users, not LLMs** --
+there is no model call anywhere in this repo, and the ReporterAgent renders a
+template. That is a deliberate scope limit: it keeps every number here
+reproducible from a seed, and an LLM narrator over the same tool outputs would
+add prose, not evidence.
 """
 from __future__ import annotations
 import numpy as np
@@ -59,7 +62,7 @@ class VerifierAgent:
 
 
 class ReporterAgent:
-    """Optional LLM writer; deterministic template fallback with no key."""
+    """Renders the surviving suspects and their groups as a Markdown report."""
 
     def write(self, ranked, clusters, stability, names):
         lines = ["# Yield Root-Cause Report", ""]
@@ -74,6 +77,7 @@ class ReporterAgent:
         lines.append("\n## Independent root-cause groups")
         for g in clusters:
             lines.append("- " + ", ".join(names[i] for i in g))
-        lines.append("\n_Reporter ran in offline/template mode "
-                     "(set OPENAI_API_KEY for an LLM narrative)._")
+        lines.append("\n_Impact = mean AUC drop when the sensor is permuted. "
+                     "Stability = fraction of bootstrap resamples in which the "
+                     "sensor was re-selected._")
         return "\n".join(lines)

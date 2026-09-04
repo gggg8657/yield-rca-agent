@@ -1,0 +1,269 @@
+"""``AgentRCA``: the plan -> execute -> verify agent loop as an sklearn estimator.
+
+Wrapping the loop in ``fit``/``predict_proba`` is what makes the headline claim
+testable. Everything the loop does -- cleaning, screening, attribution,
+correlation grouping, bootstrap verification, final refit -- happens inside
+``fit``, so dropping it into ``cross_validate`` against a plain classifier
+measures exactly one thing: *does routing agents over the sensors beat handing
+all of them to the model?* If the loop peeked at the test fold anywhere, that
+comparison would be worthless, so it cannot.
+
+    SensorAgent      screen + held-out permutation importance -> ranked suspects
+    CorrelatorAgent  group near-identical sensors -> one representative each
+    VerifierAgent    re-derive the ranking on bootstrap resamples -> stability
+    (drop)           suspects below `stability_min` are discarded
+    ReporterAgent    render survivors + groups (yieldrca.agents)
+"""
+from __future__ import annotations
+
+import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+from .attribution import (
+    _pos_score,
+    correlation_clusters,
+    permutation_importance_heldout,
+    screen_model,
+    screen_multivariate,
+    screen_univariate,
+)
+from .preprocess import MissingIndicatorAppender, SensorCleaner
+
+
+def make_logreg(C=0.03, seed=0):
+    """Median-impute -> standardise -> missing-indicator -> L2 logistic."""
+    return Pipeline([
+        ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
+        ("scale", StandardScaler()),
+        ("clf", LogisticRegression(C=C, class_weight="balanced", max_iter=3000,
+                                   random_state=seed)),
+    ])
+
+
+def make_logreg_missind(C=0.03, seed=0):
+    return Pipeline([
+        ("missind", MissingIndicatorAppender(min_frac=0.01)),
+        ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
+        ("scale", StandardScaler()),
+        ("clf", LogisticRegression(C=C, class_weight="balanced", max_iter=3000,
+                                   random_state=seed)),
+    ])
+
+
+def make_hgb(learning_rate=0.05, max_leaf_nodes=15, max_iter=200, seed=0):
+    """Histogram gradient boosting -- consumes NaN natively, so no imputer."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    return HistGradientBoostingClassifier(
+        learning_rate=learning_rate, max_leaf_nodes=max_leaf_nodes,
+        max_iter=max_iter, min_samples_leaf=20, l2_regularization=1.0,
+        class_weight="balanced", early_stopping=False, random_state=seed,
+    )
+
+
+def make_rf(n_estimators=500, min_samples_leaf=5, max_features="sqrt", seed=0):
+    """Median-impute -> random forest. The strongest plain baseline on SECOM."""
+    from sklearn.ensemble import RandomForestClassifier
+
+    return Pipeline([
+        ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
+        ("clf", RandomForestClassifier(
+            n_estimators=n_estimators, min_samples_leaf=min_samples_leaf,
+            max_features=max_features, class_weight="balanced_subsample",
+            n_jobs=1, random_state=seed)),
+    ])
+
+
+BASE_FACTORIES = {
+    "logreg": make_logreg,
+    "logreg_missind": make_logreg_missind,
+    "hgb": make_hgb,
+    "rf": make_rf,
+}
+
+
+class AgentRCA(BaseEstimator, ClassifierMixin):
+    """Agent loop over sensors, then a classifier on the survivors.
+
+    Parameters
+    ----------
+    base : {"logreg", "logreg_missind", "hgb", "rf"}
+        Final classifier, also used as the attribution probe.
+    attribution : {"permutation", "model"}
+        How suspects are scored. ``"permutation"`` is the held-out AUC drop --
+        principled, but with ~25 positives in an inner validation split it is
+        also noisy. ``"model"`` averages the base model's own importance over
+        the inner splits instead: cheaper, lower variance, and it cannot be
+        read as a causal effect.
+    screen : {"logreg", "model", "univariate"}
+        Candidate-pool screen. ``"logreg"`` ranks by |standardised logistic
+        coefficient|; ``"model"`` uses the base model's own importance, which
+        matters when the base is a forest and the screen is not; ``"univariate"``
+        is the naive per-sensor control.
+    n_screen, n_screen_boot : int
+        Candidate-pool size for the full ranking and for each bootstrap replay.
+    select_k : int
+        Rank depth that counts as "selected" in each bootstrap replay. This is
+        the *predictive* vote depth and is deliberately separate from
+        ``top_k``, which is only the reporting depth: a sensor can be a useful
+        predictor without ever being the single most important one.
+    top_k : int
+        Reporting depth. ``stability_top_k_`` records how often each survivor
+        reached this depth -- the quantity the top-5 stability KPI is about.
+    stability_min : float
+        Bootstrap selection frequency a suspect must reach to survive the drop
+        step (classic stability selection with threshold pi).
+    max_select : int
+        Cap on selected sensors handed to the final classifier.
+    n_boot : int
+        Bootstrap resamples the VerifierAgent runs.
+    corr_thresh : float
+        |r| at or above which two sensors are treated as one signal.
+    """
+
+    def __init__(self, base="hgb", base_kw=None, screen="logreg",
+                 attribution="permutation", n_screen=60, n_screen_boot=40,
+                 select_k=20, top_k=5, stability_min=0.5, max_select=25,
+                 n_boot=12, corr_thresh=0.9, n_inner=3, n_repeats=3,
+                 random_state=0):
+        self.base = base
+        self.base_kw = base_kw
+        self.screen = screen
+        self.attribution = attribution
+        self.n_screen = n_screen
+        self.n_screen_boot = n_screen_boot
+        self.select_k = select_k
+        self.top_k = top_k
+        self.stability_min = stability_min
+        self.max_select = max_select
+        self.n_boot = n_boot
+        self.corr_thresh = corr_thresh
+        self.n_inner = n_inner
+        self.n_repeats = n_repeats
+        self.random_state = random_state
+
+    # -- helpers ---------------------------------------------------------
+    def _make_base(self, seed=None):
+        kw = dict(self.base_kw or {})
+        kw.setdefault("seed", self.random_state if seed is None else seed)
+        return BASE_FACTORIES[self.base](**kw)
+
+    def _fit_base(self, X, y, seed=None):
+        return clone(self._make_base(seed)).fit(X, y)
+
+    def _screen(self, Xc, y, n_keep, seed):
+        if self.screen == "model":
+            return screen_model(lambda a, b: self._fit_base(a, b, seed=seed),
+                                Xc, y, n_keep=n_keep)
+        if self.screen == "univariate":
+            return screen_univariate(Xc, y, n_keep=n_keep)
+        return screen_multivariate(Xc, y, n_keep=n_keep, seed=seed)
+
+    def _rank(self, Xc, y, n_screen, n_inner, n_repeats, seed):
+        """One pass of SensorAgent: screen -> importance over the candidate pool."""
+        cand, w = self._screen(Xc, y, n_screen, seed)
+        if self.attribution == "model":
+            imp = np.zeros(Xc.shape[1])
+            rng = np.random.default_rng(seed)
+            for r in range(max(1, n_inner)):
+                sub = rng.choice(len(y), len(y), replace=True) if r else np.arange(len(y))
+                if y[sub].sum() < 5:
+                    continue
+                _, wr = screen_model(lambda a, b: self._fit_base(a, b, seed=seed + r),
+                                     Xc[sub], y[sub], n_keep=1)
+                imp[cand] += wr[cand]
+            return imp / max(1, n_inner)
+        return permutation_importance_heldout(
+            lambda a, b: self._fit_base(a, b, seed=seed), Xc, y, cand,
+            n_splits=n_inner, n_repeats=n_repeats, seed=seed)
+
+    # -- sklearn API -----------------------------------------------------
+    def fit(self, X, y):
+        X = np.asarray(X, dtype=np.float64)
+        y = np.asarray(y).astype(int)
+        rs = self.random_state
+
+        # --- 0. clean (fold-internal) ----------------------------------
+        self.cleaner_ = SensorCleaner().fit(X)
+        Xc = self.cleaner_.transform(X)
+        keep = self.cleaner_.keep_
+
+        # --- 1. SensorAgent --------------------------------------------
+        imp = self._rank(Xc, y, self.n_screen, self.n_inner, self.n_repeats, rs)
+        order = np.argsort(imp)[::-1]
+        suspects = [int(j) for j in order if imp[j] > 0][: self.max_select * 3]
+
+        # --- 2. CorrelatorAgent: one representative per signal family ---
+        groups = correlation_clusters(Xc, suspects, thresh=self.corr_thresh)
+        reps = [max(g, key=lambda j: imp[j]) for g in groups]
+        reps.sort(key=lambda j: -imp[j])
+
+        # --- 3. VerifierAgent: replay the ranking on bootstrap resamples -
+        rng = np.random.default_rng(rs)
+        hits = {int(j): 0 for j in reps}
+        hits_top = {int(j): 0 for j in reps}
+        n_eff = 0
+        for b in range(self.n_boot):
+            idx = rng.integers(0, len(y), len(y))
+            if y[idx].sum() < 5:
+                continue
+            imp_b = self._rank(Xc[idx], y[idx], self.n_screen_boot,
+                               max(1, self.n_inner - 2), max(1, self.n_repeats - 1),
+                               rs + 100 + b)
+            order_b = np.argsort(imp_b)[::-1]
+            sel_b = set(int(j) for j in order_b[: self.select_k] if imp_b[j] > 0)
+            top_b = set(int(j) for j in order_b[: self.top_k] if imp_b[j] > 0)
+            for j in hits:
+                hits[j] += int(j in sel_b)
+                hits_top[j] += int(j in top_b)
+            n_eff += 1
+        self.stability_ = {j: (h / n_eff if n_eff else 0.0) for j, h in hits.items()}
+        self.stability_top_k_ = {j: (h / n_eff if n_eff else 0.0)
+                                 for j, h in hits_top.items()}
+
+        # --- 4. drop the unstable, then refit --------------------------
+        surv = [j for j in reps if self.stability_[j] >= self.stability_min]
+        if not surv:  # never return empty-handed; fall back to the top reps
+            surv = reps[: min(5, len(reps))]
+        surv = surv[: self.max_select]
+
+        self.selected_ = np.asarray(sorted(surv), dtype=int)          # cleaned space
+        self.selected_original_ = keep[self.selected_]                 # original space
+        self.importance_ = {int(j): float(imp[j]) for j in reps}
+        self.groups_ = [[int(keep[j]) for j in g] for g in groups]
+        self.ranked_ = [(int(keep[j]), float(imp[j])) for j in reps]
+        self.n_candidates_ = len(reps)
+
+        self.model_ = self._fit_base(Xc[:, self.selected_], y)
+        self.classes_ = np.array([0, 1])
+        return self
+
+    def predict_proba(self, X):
+        X = np.asarray(X, dtype=np.float64)
+        Xc = self.cleaner_.transform(X)[:, self.selected_]
+        p1 = _pos_score(self.model_, Xc)
+        return np.column_stack([1 - p1, p1])
+
+    def decision_function(self, X):
+        return self.predict_proba(X)[:, 1]
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+
+    # -- reporting -------------------------------------------------------
+    def report(self, names=None):
+        from .agents import ReporterAgent
+
+        names = names or [f"sensor_{i:03d}" for i in range(self.cleaner_.n_features_in_)]
+        keep = self.cleaner_.keep_
+        ranked = [(int(keep[j]), float(self.importance_[j]))
+                  for j in self.selected_ if j in self.importance_]
+        ranked.sort(key=lambda t: -t[1])
+        stab = {int(keep[j]): v for j, v in self.stability_.items()}
+        sel = set(self.selected_original_.tolist())
+        groups = [g for g in self.groups_ if sel & set(g)]
+        return ReporterAgent().write(ranked, groups, stab, names)

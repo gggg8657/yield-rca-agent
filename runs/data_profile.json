@@ -1,0 +1,47 @@
+{
+  "n_wafers": 1567,
+  "n_sensors": 590,
+  "n_fail": 104,
+  "fail_rate": 0.06636885768985322,
+  "imbalance_ratio": 14.067307692307692,
+  "missing_frac_overall": 0.04537548808583821,
+  "sensors_with_any_missing": 538,
+  "sensors_missing_gt_20pct": 32,
+  "sensors_missing_gt_50pct": 28,
+  "sensors_all_missing": 0,
+  "rows_with_any_missing": 1567,
+  "max_missing_frac": 0.9119336311423102,
+  "constant_sensors": 116,
+  "duplicate_groups": 7,
+  "duplicate_sensors_removable": 104,
+  "time_span_days": 89.75833333333334,
+  "time_monotonic": true,
+  "cleaner": {
+    "sensors_in": 590,
+    "sensors_kept": 474,
+    "dropped_total": 116,
+    "dropped_by_reason": {
+      "constant": 116
+    },
+    "exact_duplicate_groups_after_constant_drop": 0,
+    "missing_indicator_columns": 98
+  },
+  "corr_clusters_at_0.99": {
+    "clusters_over_kept_sensors": 370,
+    "kept_sensors": 474,
+    "largest_cluster": 6,
+    "sensors_in_a_multi_member_cluster": 179
+  },
+  "corr_clusters_at_0.95": {
+    "clusters_over_kept_sensors": 282,
+    "kept_sensors": 474,
+    "largest_cluster": 10,
+    "sensors_in_a_multi_member_cluster": 301
+  },
+  "corr_clusters_at_0.9": {
+    "clusters_over_kept_sensors": 256,
+    "kept_sensors": 474,
+    "largest_cluster": 18,
+    "sensors_in_a_multi_member_cluster": 326
+  }
+}
