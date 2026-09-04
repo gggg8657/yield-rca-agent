@@ -11,7 +11,7 @@ Run environment: CPU only, Python 3.11.15, scikit-learn 1.8.0, numpy 2.3.5; the 
 - **Sparsity is the price, and it is not negotiable.** Sweeping the loop's settings, AUC tracks how many sensors survive. The leanest configuration whose paired CI still reaches the baseline is `agent_operating_model` at -0.0262 [-0.0524, +0.0000], keeping about 25 sensors -- but that CI only just touches zero, so read it as a boundary case rather than a tie; the leanest *unambiguous* tie keeps about 45. The loop can match a full-sensor forest, but only by declining to be a shortlist -- every setting that returns a list short enough for an engineer to work through is measurably worse.
 - **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Repeating the exercise at every origin -- train on the past, test on the next block of wafers -- puts the best arm at 0.656 (`agent_rf`), so this is not one unlucky split. Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
 - **And the drift is measured, not assumed.** Label each wafer by *era* instead of outcome -- early 70% versus late 30% -- and the same pipeline separates the two eras from the sensors alone at **0.993** AUC (0.516 with the era label shuffled). The process data says far more about *when* a wafer was made than about *whether it failed*: 70.7% of sensors shift significantly between the first and last time block, and the fail rate itself runs 3.5% to 14.0% across blocks (chi-square p = 1e-07). On a non-stationary process, "the top 5 causes" is not a fixed quantity measured noisily -- it is a quantity that moves while you measure it.
-- **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding.
+- **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding. Repeating the protocol at five block counts (below) keeps the sign at every one but puts the median effect at +0.017 rather than +0.071, and no single interval excludes zero.
 - **The machinery works where its premise holds.** On the synthetic generator -- 5 genuinely causal sensors among 200, block-correlated noise -- the loop recovers 98% of them in its top 5, scores 86.8% top-5 stability (KPI met), and beats the full-sensor forest by +0.029 [+0.024, +0.033] AUC -- the *opposite* sign to SECOM. The loop assumes a few sensors drive the failures; where that is true it wins on accuracy and stability, and where the signal is spread thin it throws away what the model needed. **Recovery is only ever claimed on synthetic data; SECOM has no causal labels and none is reported for it.**
 
 ## The data, as it actually arrives
@@ -98,6 +98,22 @@ Label drift is also present: the fail rate ranges 3.5% to 14.0% across blocks (c
 
 This is also the cleanest argument for why the top-5 stability KPI is hard here in a way no ranker fixes. If the sensors themselves are non-stationary over the 90 days, "the top 5 causes" is not a fixed quantity being estimated noisily -- it is a quantity that changes while you estimate it.
 
+## Robustness of the forward-in-time reversal
+
+The reversal above rests on one block count, so here is the same protocol at several -- rolling origin (expanding window) at several block counts; origins within a block count share training data, so the intervals are optimistic -- what this settles is whether the sign is stable. Fewer blocks means larger, less noisy test sets but fewer origins; more blocks means the opposite, and origins with fewer than 3 fails in the test block are skipped, because an AUC on one or two positives is not a number. (7 min.)
+
+| blocks | origins | fails per test block | best arm | `agent_rf` | `hgb_all` | `rf_all` | `univar_top25_rf` | agent_rf - rf_all |
+|---|---|---|---|---|---|---|---|---|
+| 3 | 2 | 16-27 | `agent_rf` | 0.594 | 0.581 | 0.591 | 0.584 | +0.004 [-0.247, +0.254] |
+| 4 | 3 | 13-24 | `hgb_all` | 0.571 | 0.595 | 0.554 | 0.527 | +0.017 [-0.027, +0.062] |
+| 5 | 4 | 11-21 | `agent_rf` | 0.656 | 0.597 | 0.585 | 0.644 | +0.071 [-0.072, +0.214] |
+| 8 | 7 | 4-24 | `agent_rf` | 0.594 | 0.583 | 0.583 | 0.586 | +0.011 [-0.094, +0.117] |
+| 10 | 7 | 3-24 | `agent_rf` | 0.575 | 0.544 | 0.558 | 0.535 | +0.017 [-0.130, +0.165] |
+
+The **sign** is stable: a sparse arm is the best forward-in-time arm at 4 of the 5 block counts, and `agent_rf` is above `rf_all` at 5 of 5. The **magnitude** is not established: not one of the 5 paired intervals excludes zero, and the origins within a block count share training data, so the intervals are optimistic to begin with. The defensible conclusion is a direction, not an effect size: on a drifting process, sparse attribution looks like it generalises better than a full-sensor model, and SECOM is too small to say by how much.
+
+One more thing worth saying against the earlier section: the block count it uses (5) produced the **largest** of the 5 effects at +0.071, against a median of +0.017 across block counts. The reversal is not an artefact -- the sign holds everywhere -- but the headline number is the optimistic end of the range, and the median is the better estimate of it.
+
 ## Is the pre-registered operating point the problem?
 
 The agent loop's structural settings are fixed in advance rather than tuned, which is only defensible if the surface around them is published instead of hidden. Same protocol as above (RepeatedStratifiedKFold(5 x 2, seed 0); identical folds for every row), 10 folds, 12 min:
@@ -140,6 +156,7 @@ Two perturbation schemes, and the choice matters more than any modelling decisio
 | `univariate` | per-sensor \|AUC - 0.5\| | 46.1% | 46.0% | 61.1% | 73.7% | 73.7% |
 | `logreg_coef` | \|standardised logistic coefficient\| | 42.6% | 42.6% | 55.9% | 68.8% | 68.8% |
 | `rf_impurity` | random-forest impurity importance | 36.5% | 36.6% | 49.7% | 53.0% | 53.0% |
+| `agent_no_corr` | attribute -> verify -> drop, correlation grouping off | 22.1% | 22.6% | 35.0% | -- | -- |
 | `perm_only` | SensorAgent only: screen + held-out permutation AUC drop | 20.0% | 20.6% | 32.8% | 34.1% | 34.3% |
 
 A uniformly random ranker scores 1.1% raw (5 of 474 surviving sensors) and 1.4% cluster-aware (5 of 370 clusters), so every row is far clear of chance.

@@ -412,9 +412,15 @@ def sec_rolling(ev, prof=None):
     return body
 
 
-def sec_rolling_sweep(rs):
+def sec_rolling_sweep(rs, ev=None):
     if not rs:
         return []
+    # which block count did the headline rolling-origin section use?
+    headline_b = None
+    if ev and "rolling_origin" in ev:
+        m_b = re.search(r"(\d+) contiguous time blocks",
+                        ev["protocol"]["rolling_origin"]["rule"])
+        headline_b = m_b.group(1) if m_b else None
     per = rs["per_block_count"]
     counts = sorted(per, key=lambda b: int(b))
     arms = sorted({a for b in counts for a in per[b]["per_arm"]})
@@ -436,14 +442,15 @@ def sec_rolling_sweep(rs):
               if "agent_vs_rf_all" in per[b]]
     pos = sum(1 for d in deltas if d["mean"] > 0)
     clear = [d for d in deltas if not crosses_zero(d)]
-    return ["## Robustness of the forward-in-time reversal", "",
-            f"The reversal above rests on one block count, so here is the same "
-            f"protocol at several. {rs['protocol']} Fewer blocks means larger, "
+    body = ["## Robustness of the forward-in-time reversal", "",
+            f"The reversal above rests on one block count, so here is the "
+            f"same protocol at several -- {rs['protocol']}. Fewer blocks "
+            f"means larger, "
             f"less noisy test sets but fewer origins; more blocks means the "
             f"opposite, and origins with fewer than "
             f"{rs['min_fails_in_test_block']} fails in the test block are "
-            f"skipped because an AUC on one or two positives is not a number. "
-            f"({rs['wall_min']:.0f} min.)", "",
+            f"skipped, because an AUC on one or two positives is not a "
+            f"number. ({rs['wall_min']:.0f} min.)", "",
             table(rows, ["blocks", "origins", "fails per test block",
                          "best arm", *[f"`{a}`" for a in arms],
                          "agent_rf - rf_all"]), "",
@@ -458,10 +465,27 @@ def sec_rolling_sweep(rs):
                f"not one of the {len(deltas)} paired intervals excludes zero, "
                f"and the origins within a block count share training data, so "
                f"the intervals are optimistic to begin with.")
-            + " The defensible conclusion is a direction, not an effect size: "
-              "on a drifting process, sparse attribution looks like it "
+            + " The defensible conclusion is a direction, not an effect "
+              "size: on a drifting process, sparse attribution looks like it "
               "generalises better than a full-sensor model, and SECOM is too "
               "small to say by how much.", ""]
+    if deltas and len(deltas) > 2 and headline_b:
+        mags = sorted(d["mean"] for d in deltas)
+        med = mags[len(mags) // 2]
+        hd = per.get(headline_b, {}).get("agent_vs_rf_all")
+        if hd:
+            rank = sum(1 for m in mags if m > hd["mean"])
+            body += [
+                f"One more thing worth saying against the earlier section: the "
+                f"block count it uses ({headline_b}) produced the "
+                + ("**largest** " if rank == 0 else f"{rank + 1}th largest ")
+                + f"of the {len(mags)} effects at {hd['mean']:+.3f}, against a "
+                  f"median of {med:+.3f} across block counts. The reversal is "
+                  f"not an artefact -- the sign holds everywhere -- but the "
+                  f"headline number is the optimistic end of the range, and "
+                  f"the median is the better estimate of it.", "",
+            ]
+    return body
 
 
 def sec_drift(dr):
@@ -679,18 +703,20 @@ def sec_stability(st):
     if not st:
         return []
     rows = []
-    order = sorted(st["rankers"],
-                   key=lambda r: -st["rankers"][r]["bootstrap"]["raw"]["pairwise_overlap"])
+    # a ranker mid-measurement may have bootstrap but not yet cv_train
+    ranked = {k: v for k, v in st["rankers"].items() if "bootstrap" in v}
+    order = sorted(ranked,
+                   key=lambda r: -ranked[r]["bootstrap"]["raw"]["pairwise_overlap"])
     for name in order:
-        r = st["rankers"][name]
-        b, c = r["bootstrap"], r["cv_train"]
+        r = ranked[name]
+        b, c = r["bootstrap"], r.get("cv_train")
         rows.append([
             f"`{name}`", r["label"],
             pct(b["raw"]["pairwise_overlap"]),
             pct(b["cluster"]["pairwise_overlap"]),
             pct(b["raw"]["consensus_freq"]),
-            pct(c["raw"]["pairwise_overlap"]),
-            pct(c["cluster"]["pairwise_overlap"]),
+            pct(c["raw"]["pairwise_overlap"]) if c else "--",
+            pct(c["cluster"]["pairwise_overlap"]) if c else "--",
         ])
     body = [
         "## SECOM: top-5 stability", "",
@@ -728,14 +754,14 @@ def sec_stability(st):
         f"far clear of chance.", "",
     ]
     ag = st["rankers"].get("agent")
-    if not ag:
+    if not ag or "cv_train" not in ag:
         return body
     b, c = ag["bootstrap"], ag["cv_train"]
     v_boot, boot_ok = verdict(b["raw"]["pairwise_overlap"], KPI_STABILITY)
     v_cl, _ = verdict(b["cluster"]["pairwise_overlap"], KPI_STABILITY)
     v_cv, cv_ok = verdict(c["raw"]["pairwise_overlap"], KPI_STABILITY)
-    best_raw = max(st["rankers"],
-                   key=lambda r: st["rankers"][r]["bootstrap"]["raw"]["pairwise_overlap"])
+    best_raw = max(ranked,
+                   key=lambda r: ranked[r]["bootstrap"]["raw"]["pairwise_overlap"])
     body += [
         f"The full agent loop reaches "
         f"**{pct(b['raw']['pairwise_overlap'])}** pairwise overlap under "
@@ -888,7 +914,7 @@ def sec_synthetic(sy, ev=None):
     ]
 
 
-def sec_headline(ev, st, sy, sw, prof=None, dr=None):
+def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None):
     """The handful of sentences a reader should leave with, computed not asserted."""
     if not ev:
         return []
@@ -1025,9 +1051,14 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None):
                f"{ev['protocol']['rolling_origin']['n_origins']} origins, so "
                "it is a hypothesis worth a bigger dataset, not a finding."
                if crosses_zero(dro) else
-               f"is clear of zero over "
-               f"{ev['protocol']['rolling_origin']['n_origins']} origins -- "
-               "suggestive, but four origins is four origins."))
+               f"is clear of zero over only "
+               f"{ev['protocol']['rolling_origin']['n_origins']} origins.")
+            + (f" Repeating the protocol at five block counts (below) keeps "
+               f"the sign at every one but puts the median effect at "
+               f"{sorted(v['agent_vs_rf_all']['mean'] for v in rsw['per_block_count'].values() if 'agent_vs_rf_all' in v)[len([v for v in rsw['per_block_count'].values() if 'agent_vs_rf_all' in v]) // 2]:+.3f} "
+               f"rather than {dro['mean']:+.3f}, and no single interval "
+               f"excludes zero."
+               if rsw and rsw.get("per_block_count") else ""))
     if sy and "agent" in sy.get("recovery", {}):
         r = sy["recovery"]["agent"]
         if True:
@@ -1133,13 +1164,14 @@ def build(runs: Path):
               f"`runs/secom_eval.json` took {e['cv_wall_min']:.1f} min on 16 "
               "workers.", ""]
     dr = read_json(runs / "drift.json")
-    L += sec_headline(ev, st, sy, sw, prof, dr)
+    rsw = read_json(runs / "rolling_sweep.json")
+    L += sec_headline(ev, st, sy, sw, prof, dr, rsw)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
     L += sec_rolling(ev, prof)
     L += sec_drift(dr)
-    L += sec_rolling_sweep(read_json(runs / "rolling_sweep.json"))
+    L += sec_rolling_sweep(rsw, ev)
     L += sec_sweep(sw)
     L += sec_stability(st)
     L += sec_synthetic(sy, ev)
@@ -1179,8 +1211,8 @@ README_BLOCKS = {
     "intro_data": lambda d: "\n".join(sec_intro(d["prof"], d["ev"])).strip(),
     "limits": lambda d: "\n".join(sec_limits(d["prof"], d["st"])[2:]).strip(),
     "headline": lambda d: "\n".join(
-        sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"],
-                     d["dr"])[2:]).strip(),
+        sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"], d["dr"],
+                     d["rs"])[2:]).strip(),
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),
@@ -1192,7 +1224,7 @@ README_BLOCKS = {
         sec_rolling(d["ev"], d["prof"])[2:]).strip(),
     "drift": lambda d: "\n".join(sec_drift(d["dr"])[2:]).strip(),
     "rolling_sweep": lambda d: "\n".join(
-        sec_rolling_sweep(d["rs"])[2:]).strip(),
+        sec_rolling_sweep(d["rs"], d["ev"])[2:]).strip(),
 }
 
 
