@@ -20,7 +20,7 @@ import numpy as np
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import StandardScaler
 
 
@@ -144,7 +144,3 @@ def correlation_clusters(X, cols, thresh=0.9):
         groups.append([int(cols[i]) for i in sorted(comp)])
     return groups
 
-
-def stratified_folds(y, n_splits=5, seed=0):
-    return list(StratifiedKFold(n_splits=n_splits, shuffle=True,
-                                random_state=seed).split(np.zeros(len(y)), y))

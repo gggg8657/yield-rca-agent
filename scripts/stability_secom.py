@@ -33,7 +33,7 @@ from yieldrca.attribution import (
     screen_univariate,
 )
 from yieldrca.data import load_secom
-from yieldrca.estimator import AgentRCA, make_logreg, make_rf
+from yieldrca.estimator import AgentRCA, make_rf
 from yieldrca.preprocess import SensorCleaner
 from yieldrca.stability import (
     bootstrap_replicates,

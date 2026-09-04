@@ -12,7 +12,6 @@ Two paths, kept deliberately separate because they answer different questions:
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np

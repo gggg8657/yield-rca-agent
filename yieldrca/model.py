@@ -1,8 +1,9 @@
-"""Defect classifier + feature attribution.
+"""Defect classifier + feature attribution for the dependency-free path.
 
-Real path: gradient boosting (xgboost/sklearn) + SHAP. If those aren't
-installed, falls back to a numpy logistic regression with class weighting
-and permutation importance — so the pipeline runs anywhere.
+A class-weighted logistic regression in plain NumPy, plus permutation
+importance and a tie-correct rank AUC. This exists so the repo runs with
+nothing but numpy installed; the scikit-learn arms that produce every measured
+result live in :mod:`yieldrca.estimator`.
 """
 from __future__ import annotations
 import numpy as np
@@ -43,18 +44,6 @@ class LogisticRCA:
     def predict_proba(self, X):
         Xs, _ = _impute_scale(X, self.stats)
         return 1 / (1 + np.exp(-(Xs @ self.w + self.b)))
-
-
-def try_boosted():
-    """Return a fitted-API classifier from sklearn if available, else None."""
-    try:
-        from sklearn.ensemble import GradientBoostingClassifier  # noqa
-        from sklearn.impute import SimpleImputer  # noqa
-        from sklearn.pipeline import make_pipeline  # noqa
-
-        return True
-    except Exception:
-        return None
 
 
 def permutation_importance(model, X, y, metric, n_repeats=5, seed=0):
