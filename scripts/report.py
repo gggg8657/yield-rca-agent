@@ -559,6 +559,29 @@ def sec_sweep(sw):
                 f"-- a tie here is weaker evidence than a tie there. The "
                 f"headline comparison is the one with the folds.", "",
             ]
+    # matched-sparsity comparison against the naive control
+    ctl = "univar_top25_rf"
+    if ctl in sw["n_selected_mean"] and agents:
+        n_ctl = sw["n_selected_mean"][ctl]
+        near = min(agents, key=lambda x: abs(x[2] - n_ctl))
+        dm = paired.get(f"{near[0]}__vs__{ctl}")
+        if dm:
+            body += [
+                f"The fairest single comparison in the table is at matched "
+                f"sparsity. `{ctl}` keeps {n_ctl:.0f} sensors chosen one at a "
+                f"time; `{near[0]}` keeps {near[2]:.0f} chosen by the full "
+                f"loop. Paired over the same folds the loop is "
+                f"{signed(dm, 3)} against it"
+                + (" -- an interval including zero, so at equal budget the "
+                   "plan/verify machinery is not measurably better than "
+                   "ranking each sensor on its own."
+                   if crosses_zero(dm) else
+                   " -- an interval clear of zero, so at equal budget the "
+                   "machinery does beat ranking each sensor on its own.")
+                + " That is the comparison the loop most needs to win, and on "
+                  "this data it does not win it decisively either way.", "",
+            ]
+
     nodrop = [a for a in per if a.startswith("agent_no_drop")]
     if nodrop:
         nd = max(nodrop, key=lambda a: per[a]["mean"])
@@ -795,7 +818,7 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None):
     if sw:
         per, paired = sw["auc"]["per_arm"], sw["auc"]["paired"]
         tied = [(a, sw["n_selected_mean"][a]) for a in per
-                if a in sw["n_selected_mean"]
+                if a.startswith("agent_") and a in sw["n_selected_mean"]
                 and crosses_zero(paired[f"{a}__vs__rf_all"])]
         if tied:
             lean, n_lean = min(tied, key=lambda t: t[1])

@@ -99,11 +99,11 @@ This is also the cleanest argument for why the top-5 stability KPI is hard here 
 
 ## Is the pre-registered operating point the problem?
 
-The agent loop's structural settings are fixed in advance rather than tuned, which is only defensible if the surface around them is published instead of hidden. Same protocol as above (RepeatedStratifiedKFold(5 x 2, seed 0); identical folds for every row), 10 folds, 11 min:
+The agent loop's structural settings are fixed in advance rather than tuned, which is only defensible if the surface around them is published instead of hidden. Same protocol as above (RepeatedStratifiedKFold(5 x 2, seed 0); identical folds for every row), 10 folds, 12 min:
 
 | arm | attribution | vote k / threshold / cap | sensors selected | ROC-AUC (95% CI) | paired delta vs `rf_all` |
 |---|---|---|---|---|---|
-| `rf_all` | -- | -- | -- | 0.766 [0.731, 0.801] | -- |
+| `rf_all` | -- | -- | 472.8 | 0.766 [0.731, 0.801] | -- |
 | `agent_no_drop_model` | model | 474 / 0.0 / 474 | 256.4 | 0.763 [0.733, 0.793] | -0.003 [-0.017, +0.011] |
 | `agent_loose_model` | model | 100 / 0.15 / 150 | 82.0 | 0.760 [0.729, 0.791] | -0.006 [-0.028, +0.016] |
 | `agent_wide_model` | model | 60 / 0.2 / 60 | 55.8 | 0.754 [0.720, 0.788] | -0.012 [-0.031, +0.007] |
@@ -111,7 +111,7 @@ The agent loop's structural settings are fixed in advance rather than tuned, whi
 | `agent_no_drop_permutation` | permutation | 474 / 0.0 / 474 | 160.1 | 0.744 [0.707, 0.781] | -0.022 [-0.049, +0.005] |
 | `agent_operating_model` | model | 40 / 0.3 / 25 | 25.0 | 0.740 [0.706, 0.774] | -0.026 [-0.052, +0.000] |
 | `agent_wide_permutation` | permutation | 60 / 0.2 / 60 | 32.8 | 0.736 [0.703, 0.770] | -0.029 [-0.058, -0.001] |
-| `univar_top25_rf` | -- | -- | -- | 0.729 [0.693, 0.766] | -0.037 [-0.060, -0.013] |
+| `univar_top25_rf` | -- | -- | 25.0 | 0.729 [0.693, 0.766] | -0.037 [-0.060, -0.013] |
 | `agent_operating_permutation` | permutation | 40 / 0.3 / 25 | 20.6 | 0.724 [0.691, 0.757] | -0.042 [-0.072, -0.012] |
 | `agent_sparse_model` | model | 20 / 0.5 / 25 | 7.1 | 0.697 [0.664, 0.731] | -0.068 [-0.097, -0.039] |
 | `agent_sparse_permutation` | permutation | 20 / 0.5 / 25 | 3.5 | 0.658 [0.631, 0.686] | -0.108 [-0.147, -0.069] |
@@ -121,6 +121,8 @@ AUC tracks how many sensors survive, and it does so almost monotonically: 41 of 
 That does not make the loop uniformly worse. 6 of the 10 configurations have a paired CI that reaches the baseline -- `agent_operating_model`, `agent_loose_permutation`, `agent_wide_model`, `agent_loose_model`, `agent_no_drop_permutation`, `agent_no_drop_model` -- and the leanest of those keeps about 25 sensors. **So the loop can match a full-sensor forest, but only by declining to be a shortlist.** Every configuration returning a list short enough for an engineer to work through (4 of them, down to 4 sensors) is measurably worse.
 
 Two caveats on those ties, both in the direction of not over-claiming. 2 of them (`agent_operating_model`, `agent_no_drop_permutation`) have a CI that only just touches zero, which is a boundary case rather than a demonstrated equivalence. And this sweep runs 10 folds where the headline table runs 25, so its intervals are wider and it has *less* power to separate arms -- a tie here is weaker evidence than a tie there. The headline comparison is the one with the folds.
+
+The fairest single comparison in the table is at matched sparsity. `univar_top25_rf` keeps 25 sensors chosen one at a time; `agent_operating_model` keeps 25 chosen by the full loop. Paired over the same folds the loop is +0.010 [-0.004, +0.024] against it -- an interval including zero, so at equal budget the plan/verify machinery is not measurably better than ranking each sensor on its own. That is the comparison the loop most needs to win, and on this data it does not win it decisively either way.
 
 The limit row is the sanity check rather than a result: with the drop step disabled (`stability_min` 0, no cap) `agent_no_drop_model` lands at 0.763, -0.003 [-0.017, +0.011] from the baseline. The wrapper degrades back onto the baseline as it should, so the gap at the operating point is the selection doing damage, not a defect in the plumbing.
 
