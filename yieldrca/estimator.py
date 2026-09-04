@@ -121,6 +121,23 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
         Cap on selected sensors handed to the final classifier.
     n_boot : int
         Bootstrap resamples the VerifierAgent runs.
+    report_tau : float or None
+        Null-calibrated bar a suspect must clear to be *reported*, as opposed to
+        ``stability_min``, which only decides what the final classifier is
+        handed. ``None`` reproduces the historical behaviour: everything in
+        ``selected_`` is reported and the report is never empty.
+
+        Set it and ``reported_`` may come back empty, which is the whole point.
+        The intended value is ``tau(alpha)`` from `scripts/abstain.py`: the
+        ``(1 - alpha)`` quantile of the largest bootstrap support this same loop
+        produces on permuted labels. Because that null is measured rather than
+        assumed, "no sensor here is above noise" becomes an outcome the pipeline
+        can actually reach -- `runs/null_fdr.json` shows it otherwise cannot,
+        at any setting of ``stability_min``.
+
+        Prediction is deliberately untouched: ``selected_`` and
+        ``predict_proba`` behave identically either way, so turning abstention
+        on cannot move an AUC and the two claims stay separable.
     corr_thresh : float
         |r| at or above which two sensors are treated as one signal.
     """
@@ -129,7 +146,7 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
                  attribution="permutation", n_screen=60, n_screen_boot=40,
                  select_k=20, top_k=5, stability_min=0.5, max_select=25,
                  n_boot=12, corr_thresh=0.9, n_inner=3, n_repeats=3,
-                 random_state=0):
+                 report_tau=None, random_state=0):
         self.base = base
         self.base_kw = base_kw
         self.screen = screen
@@ -144,6 +161,7 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
         self.corr_thresh = corr_thresh
         self.n_inner = n_inner
         self.n_repeats = n_repeats
+        self.report_tau = report_tau
         self.random_state = random_state
 
     # -- helpers ---------------------------------------------------------
@@ -239,6 +257,20 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
 
         self.selected_ = np.asarray(sorted(surv), dtype=int)          # cleaned space
         self.selected_original_ = keep[self.selected_]                 # original space
+
+        # What gets *reported* is a separate decision from what gets predicted
+        # with, and unlike `selected_` it is allowed to be empty. Ordered by
+        # impact, because a report is read top-down.
+        if self.report_tau is None:
+            rep_j = [int(j) for j in self.selected_]
+        else:
+            rep_j = [int(j) for j in reps
+                     if self.stability_[int(j)] >= self.report_tau]
+        rep_j.sort(key=lambda j: -imp[j])
+        self.reported_ = np.asarray(rep_j, dtype=int)
+        self.reported_original_ = keep[self.reported_] if len(rep_j) else \
+            np.asarray([], dtype=int)
+        self.abstained_ = bool(len(rep_j) == 0)
         self.importance_ = {int(j): float(imp[j]) for j in reps}
         self.groups_ = [[int(keep[j]) for j in g] for g in groups]
         self.ranked_ = [(int(keep[j]), float(imp[j])) for j in reps]
@@ -283,12 +315,13 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
         names = names or [f"sensor_{i:03d}" for i in range(self.cleaner_.n_features_in_)]
         keep = self.cleaner_.keep_
         ranked = [(int(keep[j]), float(self.importance_[j]))
-                  for j in self.selected_ if j in self.importance_]
+                  for j in self.reported_ if j in self.importance_]
         ranked.sort(key=lambda t: -t[1])
         stab = {int(keep[j]): v for j, v in self.stability_.items()}
-        sel = set(self.selected_original_.tolist())
+        sel = set(int(j) for j in self.reported_original_)
         groups = [g for g in self.groups_ if sel & set(g)]
-        return ReporterAgent().write(ranked, groups, stab, names)
+        return ReporterAgent().write(ranked, groups, stab, names,
+                                     tau=self.report_tau)
 
 
 class PredictAllReportFew(BaseEstimator, ClassifierMixin):
@@ -343,3 +376,11 @@ class PredictAllReportFew(BaseEstimator, ClassifierMixin):
     @property
     def selected_original_(self):
         return self.rca_.selected_original_
+
+    @property
+    def reported_original_(self):
+        return self.rca_.reported_original_
+
+    @property
+    def abstained_(self):
+        return self.rca_.abstained_

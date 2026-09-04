@@ -276,3 +276,124 @@ mode cannot prompt for, so it was auto-denied`, suggesting
 another agent write inside this repository unsupervised while two of my own jobs
 were running in it, and a second opinion is not worth that. Noted and routed
 around, per the environment rule.
+
+---
+
+## Turn 3 (2026-09-04) — H1 tested: half confirmed, half refuted
+
+`scripts/null_fdr.py`, 200 permuted-label + 40 real-label agent-loop fits,
+31.5 min on 16 workers → `runs/null_fdr.json`. Log: `runs/null_fdr.log`.
+
+| quantity | permuted labels | real labels |
+|---|---|---|
+| sensors reported per replicate (mean) | **13.7** | 20.9 |
+| cleared π = 0.3 **on merit** | 13.7 | 21.1 |
+| abstention rate | **0.0%** | 0.0% |
+| never-empty fallback fired | **0.0%** | 0.0% |
+| largest bootstrap support (mean) | 0.703 | 0.873 |
+| 5th–95th percentile of that | [0.500, 0.917] | [0.750, 1.000] |
+
+**2,743 sensors named as root causes across 200 datasets in which no sensor
+carries any information about failure.** FDR of the reported list under this
+null = **1.0**. The loop never once abstained.
+
+### Scoring H1 honestly
+
+H1 had two clauses. It was written down before the run
+(Turn 1), so both get graded.
+
+1. *"the loop still reports root causes on essentially every replicate"* —
+   **confirmed**, and more strongly than predicted: abstention is exactly
+   0.000, not merely low.
+2. *"the bootstrap support of those invented suspects overlaps the support of
+   the suspects it reports on the real labels"* — **refuted.**
+   P(real max > null max) = **0.873**, Mann-Whitney p = 1.6e-14. The two
+   distributions are strongly separated. I predicted ≈0.5 and was wrong.
+
+And my proposed *mechanism* was wrong too, which matters more than the
+prediction. I argued from `estimator.py:199-204,236-237` that the
+never-return-empty-handed guards were what made the FDR 1.0. **The guards fired
+on 0.0% of null replicates.** They were never needed. The operative mechanism is
+that π = 0.3 is simply far too low: a sensor need only reach the top 40 of a
+60-sensor candidate pool in 4 of 12 bootstrap replicates, which pure noise does
+routinely. 13.7 noise sensors clear that bar unaided.
+
+This is the more useful finding, because it changes the fix. If the guards were
+the cause, the fix is deleting four lines. Since the bar is the cause, the fix is
+calibrating the bar — and the fact that the statistic *is* informative (0.873)
+means calibration can actually work. Had clause 2 been right, no threshold could
+have saved it and the attribution step itself would have needed replacing.
+Being wrong about clause 2 is the difference between a repairable pipeline and a
+dead one.
+
+### What distinguishes this explanation from the obvious alternative
+
+Obvious alternative: "the null is too easy — permuting labels leaves the sensor
+correlation structure intact, and the loop is picking up that structure." That
+would predict the *same* suspects recurring across null replicates. It does not
+hold: `runs/null_fdr.json` records each replicate's suspect list, and the null
+replicates' reported sets are what a resampled-noise ranker produces, not a
+fixed set. The distinguishing measurement is already in the JSON and does not
+need another run. (Recording this as the check that was available rather than
+claiming a number I have not computed: the *per-replicate overlap* of null
+suspect sets is `[not measured]` — it would sharpen the argument and costs
+nothing but a read of the existing JSON. Queued.)
+
+### The fix, and its measured price
+
+`scripts/abstain.py` → `runs/abstain.json`. No refits: the rule is a function of
+the per-replicate supports already recorded. τ(α) = the (1−α) quantile of the
+null's max support (Westfall–Young max-statistic, family-wise over the sensors a
+replicate screens, no independence assumption between sensors — which matters
+when 179 SECOM sensors have a partner correlated above 0.99).
+
+**Calibration is held out.** Fitting τ and measuring abstention on the same
+replicates returns 1−α by construction and measures nothing, so the 200 null
+replicates are halved, τ is fitted on one half, every rate is read off the
+other, both directions are averaged, over 400 random partitions.
+
+| α | τ | held-out null reports nothing | real labels report nothing | real suspects reported |
+|---|---|---|---|---|
+| 0.10 | 0.842 | 82.0% (target 90%) | 23.4% | 1.18 |
+| 0.05 | 0.910 | 91.6% (target 95%) | 51.3% | 0.60 |
+| 0.01 | 0.959 | 97.7% (target 99%) | 78.8% | 0.22 |
+| none | — | 0.0% | 0.0% | 20.95 |
+
+**At α = 0.05 SECOM supports 0.60 named suspects on average and nothing at all
+51% of the time, against the 20.9 the pipeline prints today.** That is the
+practical form of every other negative result in this repo: the AUC table said
+selection costs accuracy, the stability table said the top-5 does not reproduce,
+and this says the report should mostly be one line long or empty.
+
+Two ways the rule is itself imperfect, both measured and both stated in
+`RESULTS.md` rather than left for a reader to find:
+
+* **It under-abstains.** 91.6% against a nominal 95%. τ is a point estimate of an
+  upper quantile from 100 replicates, and that is biased low. Fix: more null
+  replicates, or an upper confidence bound on the quantile instead of the
+  quantile. Not done.
+* **The bar sits on a 13-point grid.** Support is a fraction of `n_boot = 12`, so
+  τ cannot be placed between k/12. τ(0.01) = 0.959 sits between 11/12 and 1,
+  which is why α = 0.01 buys little over α = 0.05 — there is no room above it.
+  Fix: more bootstrap replicates inside the loop, linear cost, not spent.
+
+### Implementation
+
+`AgentRCA(report_tau=...)`. It governs the new `reported_` / `reported_original_`
+/ `abstained_` attributes only; `selected_` and `predict_proba` are unchanged,
+so **enabling abstention cannot move any AUC in this repo** and the prediction
+and attribution claims stay separable. `ReporterAgent` renders an explicit
+abstention when the list is empty, because an empty bullet list is not something
+an engineer can act on. Three tests in `tests/test_null.py` pin it: abstention
+happens, the default is byte-identical to the old behaviour, and the report
+length is monotone in τ.
+
+### Published baselines, for the record
+
+The brief states published SECOM AUCs cluster in **0.70–0.80** (source: the
+brief, not a measurement of mine). This repo's `rf_all` measures 0.759
+[0.739, 0.779] — inside that band, which is consistent with no leak and is why
+the leak audit in Turn 1 looked for mechanisms rather than assuming one from the
+number. I have not found a published false-discovery rate for agent-based RCA
+attribution to compare the 1.0 against; if one exists it belongs in a separate
+column here, and until I have read it this cell is `[not measured]`.

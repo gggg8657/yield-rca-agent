@@ -37,6 +37,8 @@ narrating the same tool output would add prose rather than evidence.
 - **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Repeating the exercise at every origin -- train on the past, test on the next block of wafers -- puts the best arm at 0.656 (`agent_rf`), so this is not one unlucky split. Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
 - **And the drift is measured, not assumed.** Label each wafer by *era* instead of outcome -- early 70% versus late 30% -- and the same pipeline separates the two eras from the sensors alone at **0.993** AUC (0.516 with the era label shuffled). The process data says far more about *when* a wafer was made than about *whether it failed*: 70.7% of sensors shift significantly between the first and last time block, and the fail rate itself runs 3.5% to 14.0% across blocks (chi-square p = 1e-07). On a non-stationary process, "the top 5 causes" is not a fixed quantity measured noisily -- it is a quantity that moves while you measure it.
 - **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding. Repeating the protocol at five block counts (below) keeps the sign at every one but puts the median effect at +0.017 rather than +0.071, and no single interval excludes zero.
+- **It reports root causes on data that has none.** Permute the labels so no sensor carries any information about failure, and the full plan/attribute/verify/drop loop still names 13.7 suspects per replicate and abstains on 0.0% of them -- 2,743 false discoveries over 200 replicates, a false-discovery rate of **100%**. The advertised safeguard, that unstable suspects are dropped, does not hold: 13.7 pure-noise sensors clear the stability threshold unaided, and the never-empty fallback is not even needed (0.0%). The statistic is salvageable -- P(real > null) = 0.87 -- so a threshold calibrated on that null, tau = 0.91, restores control. It also shortens the SECOM report from 20.9 suspects to **0.60**, empty 51.3% of the time. That is what this dataset actually supports.
+- **And the invented causes are fresh each time, not an artefact.** Null replicates agree with each other on only 0.014 of their top-5 against a random-ranker floor of 0.011, naming 417 of 474 sensors at least once across the run. So the loop is not re-reporting SECOM's correlation structure under the null; it is manufacturing a different answer every time it is asked.
 - **The machinery works where its premise holds.** On the synthetic generator -- 5 genuinely causal sensors among 200, block-correlated noise -- the loop recovers 98% of them in its top 5, scores 86.8% top-5 stability (KPI met), and beats the full-sensor forest by +0.029 [+0.024, +0.033] AUC -- the *opposite* sign to SECOM. The loop assumes a few sensors drive the failures; where that is true it wins on accuracy and stability, and where the signal is spread thin it throws away what the model needed. **Recovery is only ever claimed on synthetic data; SECOM has no causal labels and none is reported for it.**
 <!-- END:headline -->
 
@@ -287,7 +289,62 @@ The second gap is the one no ranker closes. Even `univariate`, the most stable t
 ## Does the loop invent root causes when there are none?
 
 <!-- BEGIN:null_fdr -->
+The pitch is that a suspect failing the bootstrap stability check is dropped, so what survives is trustworthy. That is a claim about a false-discovery rate, and it is measurable: build a world with no causal sensors and count what the loop reports anyway.
 
+**The null.** labels permuted over all wafers (class balance preserved exactly: 104 fails / 1,463 passes); X untouched. Every sensor reported under this null is a false discovery by construction. 200 such replicates, against 40 replicates of the identical loop on the true labels (identical loop, true labels, random_state varied per replicate so both arms are distributions over the loop's internal randomness). From `scripts/null_fdr.py`, written to `runs/null_fdr.json`.
+
+| quantity | permuted labels (no causes exist) | real labels | note |
+|---|---|---|---|
+| sensors reported as root causes, per replicate | 13.7 | 20.9 | mean over replicates |
+| ...of which cleared the stability threshold on merit | 13.7 | 21.1 | threshold pi = 0.3 |
+| replicates reporting nothing at all (abstention) | 0.0% | 0.0% | the only outcome that would be correct on the null |
+| replicates where the never-empty fallback fired | 0.0% | 0.0% | `estimator.py`: `if not surv: surv = reps[:5]` |
+| largest bootstrap support any suspect reached | 0.703 | 0.873 | mean; the statistic the drop step thresholds |
+| ...its 5th-95th percentile across replicates | [0.500, 0.917] | [0.750, 1.000] | how far apart the two worlds sit on the loop's own statistic |
+
+**The loop abstained never once.** Over 200 permuted-label replicates it named 2,743 sensors as root causes. Every one of them is a false discovery by construction, so the false-discovery rate of the reported suspect list under this null is **100%**.
+
+**And the mechanism is not the one the code invites you to blame.** `AgentRCA.fit` carries two never-return-empty-handed guards (`estimator.py`, `if not surv: surv = reps[:5]`), which would produce exactly this result -- but they fired on 0.0% of null replicates. They are not what is happening. The threshold itself is: 13.7 pure-noise sensors per replicate clear pi = 0.3 **on their own merit**. To clear it, a sensor need only reach the top 40 of a 60-sensor candidate pool in 4 of 12 bootstrap replicates -- which noise does routinely. Lowering or raising the guard changes nothing; the bar is in the wrong place.
+
+**Is the loop at least *more* confident on real data?** P(real replicate's best support > null replicate's best support) = **0.873**, where 0.5 is no information (Mann-Whitney p = 1.57e-14), so the statistic is strongly informative about whether the labels were real -- it is the *threshold* that is mis-set, not the measurement, and the next section prices the recalibration.
+
+### What it would cost to let it say nothing
+
+Same run, no refits: every figure below is a function of the per-replicate suspect supports in `runs/null_fdr.json`, computed by `scripts/abstain.py` into `runs/abstain.json`.
+
+**The rule.** report suspect j iff its bootstrap support s_j >= tau(alpha), where tau(alpha) is the (1-alpha) quantile of max_j s_j over null replicates (Westfall-Young max-statistic, family-wise over the sensors screened).
+
+**The calibration is held out.** fitting tau and measuring abstention on the same replicates returns 1-alpha by construction and measures nothing, so null replicates split in half; tau fitted on one half, all rates reported on the other; both directions averaged over 400 random partitions.
+
+| alpha | tau | held-out null: reports nothing | held-out null: false discoveries | real labels: reports nothing | real labels: suspects reported |
+|---|---|---|---|---|---|
+| 0.1 | 0.842 | 82.0% (target 90%) | 0.21 | 23.4% | 1.18 |
+| 0.05 | 0.910 | 91.6% (target 95%) | 0.09 | 51.3% | 0.60 |
+| 0.01 | 0.959 | 97.7% (target 99%) | 0.02 | 78.8% | 0.22 |
+| -- none -- | -- | 0.0% | 13.71 | 0.0% | 20.95 |
+
+At alpha = 0.05 the honest SECOM report is **0.60 sensors on average, and empty 51.3% of the time** -- against the 20.9 the pipeline prints today. That is the finding stated as a deliverable: this dataset supports about one named suspect, sometimes none, and the current report's length is not evidence about the process.
+
+**The rule is itself slightly optimistic, and the table says so.** Held-out abstention on the null lands at 91.6% against a nominal 95%, because tau is a quantile estimated from finitely many null replicates and a point estimate of an upper quantile is biased low. Closing that gap means more null replicates or an upper confidence bound on the quantile rather than the quantile itself; it is not closed here, and the shortfall is reported rather than rounded away.
+
+**The bar sits on a coarse grid.** Support is a fraction of 12 bootstrap replicates, so it takes only 13 distinct values and tau cannot be placed between them. At the strictest level here tau lands at or next to the ceiling, which is why the alpha = 0.01 row buys little over alpha = 0.05: there is no room above it. Finer control needs more bootstrap replicates inside the loop, which costs linearly and was not spent here.
+
+`AgentRCA(report_tau=...)` implements the rule. It governs `reported_` only -- `selected_` and `predict_proba` are byte-identical with and without it, asserted in `tests/test_null.py::test_report_tau_lets_the_loop_abstain_on_pure_noise` -- so switching abstention on cannot move any AUC in this repo, and the prediction and attribution claims stay separable.
+
+### Is the null unfairly easy?
+
+One alternative would deflate all of the above: permuting labels leaves the sensor *correlation* structure intact, so perhaps the loop is reporting that structure rather than inventing anything. If so, null replicates would keep naming the same sensors as each other. They do not:
+
+| mean pairwise top-5 overlap | value | over |
+|---|---|---|
+| null replicates agree with each other | 0.014 | 200 replicates |
+| a uniformly random top-5 would agree | 0.011 | 5 / 474 surviving sensors |
+| real-label replicates agree with each other | 0.548 | 40 replicates |
+| distinct sensors the null ever named | 417 | of 474 |
+
+At 0.014 against a floor of 0.011, the null's suspects are freshly invented on each replicate rather than a stable artefact of the correlation structure. The alternative does not hold, and the false-discovery rate stands.
+
+**The 0.548 is not comparable to this repo's top-5 stability KPI and must not be read as one.** These replicates perturb only the loop's internal random seed on the full wafer set; the KPI perturbs the *wafers*, by bootstrap resampling, which is a far harder test and is why it reads much lower in the stability section. The number is here only as the upper reference for the null column beside it.
 <!-- END:null_fdr -->
 
 ## Are the suspects causal, or only associated?

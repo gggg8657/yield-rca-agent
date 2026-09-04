@@ -1,0 +1,71 @@
+{
+  "protocol": {
+    "rule": "report suspect j iff its bootstrap support s_j >= tau(alpha), where tau(alpha) is the (1-alpha) quantile of max_j s_j over null replicates (Westfall-Young max-statistic, family-wise over the sensors screened)",
+    "calibration": "null replicates split in half; tau fitted on one half, all rates reported on the other; both directions averaged over 400 random partitions",
+    "why_split": "fitting tau and measuring abstention on the same replicates returns 1-alpha by construction and measures nothing",
+    "source": "runs/null_fdr.json",
+    "n_null": 200,
+    "n_real": 40,
+    "refits": 0
+  },
+  "environment": {
+    "python": "3.11.15",
+    "numpy": "2.3.5",
+    "platform": "Linux-6.8.0-58-generic-x86_64-with-glibc2.39"
+  },
+  "no_rule_baseline": {
+    "null_abstention": 0.0,
+    "null_reported_mean": 13.715,
+    "real_reported_mean": 20.95,
+    "note": "the pipeline as it stands, with no abstention rule"
+  },
+  "null_structure": {
+    "n_eff_sensors": 474,
+    "null": {
+      "n_replicates_top5": 200,
+      "top5_pairwise_overlap": 0.013668341708542716,
+      "selected_pairwise_overlap": 0.021388914653918508,
+      "distinct_sensors_ever_named": 417
+    },
+    "real": {
+      "n_replicates_top5": 40,
+      "top5_pairwise_overlap": 0.5479487179487179,
+      "selected_pairwise_overlap": 0.3261890099813672,
+      "distinct_sensors_ever_named": 96
+    },
+    "random_floor_top5": 0.010548523206751054,
+    "verdict": "null replicates agree with each other at 0.014, against a random floor of 0.011 and 0.548 on real labels -- indistinguishable from resampled noise, so the correlation-structure explanation does not hold"
+  },
+  "levels": {
+    "alpha_0.1": {
+      "alpha": 0.1,
+      "tau_mean": 0.8421458333333334,
+      "tau_sd": 0.023971245681532787,
+      "null_abstention_heldout": 0.8197375,
+      "null_abstention_target": 0.9,
+      "null_false_discoveries_heldout": 0.21188749999999998,
+      "real_abstention": 0.23437499999999997,
+      "real_reported_mean": 1.1756249999999997
+    },
+    "alpha_0.05": {
+      "alpha": 0.05,
+      "tau_mean": 0.9097031249999997,
+      "tau_sd": 0.022687388316177472,
+      "null_abstention_heldout": 0.91585,
+      "null_abstention_target": 0.95,
+      "null_false_discoveries_heldout": 0.08547500000000001,
+      "real_abstention": 0.5128125000000001,
+      "real_reported_mean": 0.6001875000000001
+    },
+    "alpha_0.01": {
+      "alpha": 0.01,
+      "tau_mean": 0.9586479166666667,
+      "tau_sd": 0.04137872971138852,
+      "null_abstention_heldout": 0.9771375,
+      "null_abstention_target": 0.99,
+      "null_false_discoveries_heldout": 0.022862500000000004,
+      "real_abstention": 0.7882499999999999,
+      "real_reported_mean": 0.22399999999999995
+    }
+  }
+}

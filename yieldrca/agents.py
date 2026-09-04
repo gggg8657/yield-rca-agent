@@ -64,8 +64,21 @@ class VerifierAgent:
 class ReporterAgent:
     """Renders the surviving suspects and their groups as a Markdown report."""
 
-    def write(self, ranked, clusters, stability, names):
+    def write(self, ranked, clusters, stability, names, tau=None):
         lines = ["# Yield Root-Cause Report", ""]
+        if not ranked:
+            # Reporting nothing is a result, so it is written as one rather
+            # than as an empty list the reader has to interpret.
+            lines.append(
+                "**No sensor's evidence exceeds the noise floor"
+                + (f" (bootstrap support below tau = {tau:g})" if tau is not None
+                   else "")
+                + ".** On permuted labels this pipeline reports suspects on "
+                  "every replicate, so a non-empty list is only informative "
+                  "when it clears a threshold calibrated against that null. "
+                  "This one does not. The honest answer is that these wafers "
+                  "do not identify a root cause, not that there is none.\n")
+            return "\n".join(lines)
         lines.append(f"Identified {len(ranked)} suspect sensors "
                      f"across {len(clusters)} independent group(s).\n")
         for rank, (i, score) in enumerate(ranked, 1):

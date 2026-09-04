@@ -13,37 +13,42 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 JOBS=16
 mkdir -p runs
 
-echo "== 1/9 data profile =="
+echo "== 1/10 data profile =="
 "$PY" scripts/prepare_data.py
 
-echo "== 2/9 headline SECOM evaluation (baselines vs agent loop) =="
+echo "== 2/10 headline SECOM evaluation (baselines vs agent loop) =="
 "$PY" scripts/eval_secom.py --repeats 5 --jobs "$JOBS"
 
-echo "== 3/9 agent-loop sensitivity sweep =="
+echo "== 3/10 agent-loop sensitivity sweep =="
 "$PY" scripts/sweep_loop.py --repeats 2 --jobs "$JOBS"
 
-echo "== 4/9 top-5 stability KPI =="
+echo "== 4/10 top-5 stability KPI =="
 "$PY" scripts/stability_secom.py --boot 200 --jobs "$JOBS"
 
-echo "== 5/9 drift diagnostics =="
+echo "== 5/10 drift diagnostics =="
 "$PY" scripts/drift.py --jobs "$JOBS"
 
-echo "== 6/9 rolling-origin robustness =="
+echo "== 6/10 rolling-origin robustness =="
 "$PY" scripts/rolling_sweep.py --jobs "$JOBS"
 
-echo "== 7/9 synthetic ground-truth benchmark =="
+echo "== 7/10 synthetic ground-truth benchmark =="
 "$PY" scripts/eval_synthetic.py --seeds 10 --jobs 10
 
 # The false-discovery rate of the reported suspects under a no-causal-sensor
 # null. Depends on nothing above, but is slow (240 agent-loop fits), so it sits
 # after the cheap stages rather than blocking them.
-echo "== 8/9 hallucination control: permuted-label false-discovery rate =="
+echo "== 8/10 hallucination control: permuted-label false-discovery rate =="
 "$PY" scripts/null_fdr.py --null 200 --real 40 --jobs "$JOBS"
 
 # Reads runs/secom_eval.json for the suspect sets, so it must follow stage 2.
-echo "== 9/9 invariance across production periods =="
+echo "== 9/10 invariance across production periods =="
 "$PY" scripts/invariance.py --blocks 5 --assoc-perm 20000 --inv-perm 20000 \
     --power-rep 200 --power-perm 5000
+
+# Reads runs/null_fdr.json and refits nothing, so it is seconds and must follow
+# stage 8.
+echo "== 10/10 price of abstention, calibrated on stage 8's null =="
+"$PY" scripts/abstain.py
 
 echo "== report =="
 "$PY" scripts/report.py

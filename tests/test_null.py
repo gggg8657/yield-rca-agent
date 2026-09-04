@@ -133,6 +133,62 @@ def test_permuted_labels_leave_the_loop_reporting_on_synthetic_data():
     assert len(est.selected_) >= 1
 
 
+# ------------------------------------------------------------- the abstention rule
+def test_report_tau_lets_the_loop_abstain_on_pure_noise():
+    """The fix for the property pinned above, tested as a property.
+
+    With a null-calibrated bar in place the loop must be *able* to report
+    nothing -- and must say so in words, since an empty list is not a finding a
+    reader can act on.
+    """
+    rng = np.random.default_rng(3)
+    X = rng.standard_normal((300, 40))
+    y = (rng.uniform(size=300) < 0.2).astype(int)
+    kw = dict(base="logreg", n_screen=20, n_screen_boot=12, n_boot=4,
+              select_k=8, top_k=5, max_select=10, n_inner=2, n_repeats=1,
+              random_state=0)
+    est = AgentRCA(report_tau=1.01, **kw).fit(X, y)     # unreachable bar
+    assert est.abstained_ is True
+    assert len(est.reported_) == 0
+    text = est.report()
+    assert "noise floor" in text
+    assert "permuted labels" in text
+
+    # ...and prediction is untouched, so turning abstention on cannot move an AUC
+    loose = AgentRCA(report_tau=None, **kw).fit(X, y)
+    assert np.array_equal(est.selected_, loose.selected_)
+    assert np.allclose(est.predict_proba(X), loose.predict_proba(X))
+
+
+def test_report_tau_none_reports_exactly_what_it_predicts_with():
+    """The default must stay backward compatible, or every earlier number moves."""
+    X, y, names, causal = make_synthetic(n=400, p=50, n_causal=3,
+                                         fail_rate=0.15, seed=0)
+    est = AgentRCA(base="logreg", n_screen=25, n_screen_boot=15, n_boot=4,
+                   select_k=10, top_k=5, max_select=10, n_inner=2, n_repeats=1,
+                   random_state=0).fit(X, y)
+    assert est.abstained_ is False
+    assert sorted(est.reported_.tolist()) == sorted(est.selected_.tolist())
+    assert "noise floor" not in est.report()
+
+
+def test_report_tau_keeps_only_suspects_above_the_bar():
+    """Monotone in tau: raising the bar can only shorten the report."""
+    X, y, names, causal = make_synthetic(n=500, p=60, n_causal=4,
+                                         fail_rate=0.15, seed=1)
+    kw = dict(base="logreg", n_screen=30, n_screen_boot=18, n_boot=6,
+              select_k=12, top_k=5, max_select=12, n_inner=2, n_repeats=1,
+              random_state=0)
+    prev = None
+    for tau in (0.0, 0.5, 0.9, 1.01):
+        est = AgentRCA(report_tau=tau, **kw).fit(X, y)
+        n = len(est.reported_)
+        assert all(est.stability_[int(j)] >= tau for j in est.reported_)
+        if prev is not None:
+            assert n <= prev, (tau, n, prev)
+        prev = n
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

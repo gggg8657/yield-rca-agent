@@ -425,12 +425,15 @@ def fig_null_fdr(nf, out):
     _grid(ax, axis="y")
     lo = min(min(null), min(real), thr) - 0.05
     bins = [lo + i * (1.02 - lo) / 22 for i in range(23)]
-    ax.hist(null, bins=bins, color="#eb6834", alpha=0.72, zorder=3,
-            edgecolor=SURFACE, linewidth=0.8, density=True,
-            label=f"permuted labels, no causes exist (n={len(null)})")
-    ax.hist(real, bins=bins, color="#2a78d6", alpha=0.72, zorder=3,
-            edgecolor=SURFACE, linewidth=0.8, density=True,
-            label=f"real labels (n={len(real)})")
+    # Outlines rather than solid bars: two filled histograms over the same
+    # range read as one stacked bar, which is the opposite of the point.
+    for vals, col, lab in (
+            (null, "#eb6834", f"permuted labels, no causes exist (n={len(null)})"),
+            (real, "#2a78d6", f"real labels (n={len(real)})")):
+        ax.hist(vals, bins=bins, color=col, alpha=0.22, zorder=3,
+                density=True, histtype="stepfilled")
+        ax.hist(vals, bins=bins, color=col, zorder=4, density=True,
+                histtype="step", linewidth=1.9, label=lab)
     ax.axvline(thr, color=INK_MUTED, linestyle=(0, (4, 3)), linewidth=1.3,
                zorder=5)
     ax.text(thr, ax.get_ylim()[1] * 0.97, f" drop threshold {thr:g}",
@@ -445,9 +448,11 @@ def fig_null_fdr(nf, out):
     fdr = nf["null_fdr"]["fdr_given_nonempty"]
     absten = nf["null"]["abstention_rate"]
     ax.set_title(
-        f"The drop threshold does not separate real causes from noise\n"
+        f"The drop threshold filters nothing -- but the statistic it "
+        f"thresholds is informative\n"
         f"false-discovery rate on permuted labels {fdr:.0%}, abstention "
-        f"{absten:.0%}, P(real > null) = {sep:.2f}",
+        f"{absten:.0%}; yet P(real > null) = {sep:.2f}, so recalibrating the "
+        f"bar works",
         fontsize=10, loc="left", pad=10)
     _legend_below(fig, ax.get_legend_handles_labels()[0], ncol=2)
     fig.tight_layout()

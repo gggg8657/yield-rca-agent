@@ -929,7 +929,8 @@ def sec_synthetic(sy, ev=None):
     ]
 
 
-def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None):
+def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None,
+                 nf=None, ab=None):
     """The handful of sentences a reader should leave with, computed not asserted."""
     if not ev:
         return []
@@ -1074,6 +1075,49 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None):
                f"rather than {dro['mean']:+.3f}, and no single interval "
                f"excludes zero."
                if rsw and rsw.get("per_block_count") else ""))
+    if nf:
+        n = nf["null"]
+        fd = nf["null_fdr"]
+        sep = nf["separation"]["prob_real_max_exceeds_null_max"]
+        line = (
+            f"- **It reports root causes on data that has none.** Permute the "
+            f"labels so no sensor carries any information about failure, and "
+            f"the full plan/attribute/verify/drop loop still names "
+            f"{n['n_reported_mean']:.1f} suspects per replicate and abstains on "
+            f"{pct(n['abstention_rate'])} of them -- "
+            f"{fd['false_discoveries_total']:,} false discoveries over "
+            f"{nf['protocol']['n_null']} replicates, a false-discovery rate of "
+            f"**{fd['fdr_given_nonempty']:.0%}**. The advertised safeguard, "
+            f"that unstable suspects are dropped, does not hold: "
+            f"{n['n_merit_mean']:.1f} pure-noise sensors clear the stability "
+            f"threshold unaided, and the never-empty fallback is not even "
+            f"needed ({pct(n['fallback_rate'])}).")
+        if ab and ab.get("levels"):
+            mid = ab["levels"].get("alpha_0.05") or list(ab["levels"].values())[0]
+            base = ab["no_rule_baseline"]
+            line += (
+                f" The statistic is salvageable -- P(real > null) = "
+                f"{sep:.2f} -- so a threshold calibrated on that null, "
+                f"tau = {mid['tau_mean']:.2f}, restores control. It also "
+                f"shortens the SECOM report from "
+                f"{base['real_reported_mean']:.1f} suspects to "
+                f"**{mid['real_reported_mean']:.2f}**, empty "
+                f"{pct(mid['real_abstention'])} of the time. That is what this "
+                f"dataset actually supports.")
+        L.append(line)
+    if ab and (ab.get("null_structure") or {}).get("null"):
+        stt = ab["null_structure"]
+        L.append(
+            f"- **And the invented causes are fresh each time, not an "
+            f"artefact.** Null replicates agree with each other on only "
+            f"{stt['null']['top5_pairwise_overlap']:.3f} of their top-5 "
+            f"against a random-ranker floor of "
+            f"{stt['random_floor_top5']:.3f}, naming "
+            f"{stt['null']['distinct_sensors_ever_named']} of "
+            f"{stt['n_eff_sensors']} sensors at least once across the run. So "
+            f"the loop is not re-reporting SECOM's correlation structure under "
+            f"the null; it is manufacturing a different answer every time it "
+            f"is asked.")
     if sy and "agent" in sy.get("recovery", {}):
         r = sy["recovery"]["agent"]
         if True:
@@ -1122,20 +1166,25 @@ def sec_null_fdr(nf):
         ["...its 5th-95th percentile across replicates",
          f"[{n['max_stability_q05']:.3f}, {n['max_stability_q95']:.3f}]",
          f"[{r['max_stability_q05']:.3f}, {r['max_stability_q95']:.3f}]",
-         "overlap here means the score cannot separate the two worlds"],
+         "how far apart the two worlds sit on the loop's own statistic"],
     ]
-    verdict_word = ("**never**" if n["abstention_rate"] == 0 else
+    verdict_word = ("never once" if n["abstention_rate"] == 0 else
                     f"in {pct(n['abstention_rate'])} of replicates")
     sep_p = sep["prob_real_max_exceeds_null_max"]
-    if sep_p >= 0.95:
-        sep_read = ("so the score does separate the two worlds, and a "
-                    "null-calibrated threshold is a usable filter")
-    elif sep_p >= 0.75:
-        sep_read = ("so the score carries some information about whether the "
-                    "labels were real, but not enough to filter on per-sensor")
+    if sep_p >= 0.75:
+        sep_read = ("so the statistic is strongly informative about whether "
+                    "the labels were real -- it is the *threshold* that is "
+                    "mis-set, not the measurement, and the next section prices "
+                    "the recalibration")
+    elif sep_p >= 0.6:
+        sep_read = ("so the statistic carries some information about whether "
+                    "the labels were real, but little enough that "
+                    "recalibrating its threshold will cost most of the report")
     else:
-        sep_read = ("so the score carries essentially no information about "
-                    "whether the labels were real")
+        sep_read = ("so the statistic carries essentially no information about "
+                    "whether the labels were real, and no threshold on it can "
+                    "recover one -- the attribution step itself would need "
+                    "replacing")
     body = [
         "## Does the loop invent root causes when there are none?", "",
         "The pitch is that a suspect failing the bootstrap stability check is "
@@ -1148,50 +1197,153 @@ def sec_null_fdr(nf):
         f"From `scripts/null_fdr.py`, written to `runs/null_fdr.json`.", "",
         table(rows, ["quantity", "permuted labels (no causes exist)",
                      "real labels", "note"]), "",
-        f"**The loop abstains {verdict_word}.** Over {pr['n_null']} "
+        f"**The loop abstained {verdict_word}.** Over {pr['n_null']} "
         f"permuted-label replicates it named "
-        f"{fd['false_discoveries_total']} sensors as root causes. Every one of "
+        f"{fd['false_discoveries_total']:,} sensors as root causes. Every one of "
         f"them is a false discovery by construction, so the false-discovery "
         f"rate of the reported suspect list under this null is "
         f"**{fd['fdr_given_nonempty']:.0%}**.", "",
-        f"That number is not a tuning failure, it is the architecture: "
-        f"`AgentRCA.fit` cannot return an empty report. If no suspect clears "
-        f"the threshold it restores the top five anyway "
-        f"(`estimator.py`, `if not surv: surv = reps[:5]`), and the "
-        f"candidate-selection step above it has the same guard. On the null "
-        f"the guard is mostly not even needed: "
-        f"{n['n_merit_mean']:.1f} sensors clear the threshold on merit, "
-        f"because with {pr['agent_cfg']['n_boot']} bootstrap replicates a "
-        f"pure-noise sensor that happens to rank highly once will do so again.",
+        ("**And the mechanism is not the one the code invites you to blame.** "
+         f"`AgentRCA.fit` carries two never-return-empty-handed guards "
+         f"(`estimator.py`, `if not surv: surv = reps[:5]`), which would "
+         f"produce exactly this result -- but they fired on "
+         f"{pct(n['fallback_rate'])} of null replicates. They are not what is "
+         f"happening. The threshold itself is: "
+         f"{n['n_merit_mean']:.1f} pure-noise sensors per replicate clear "
+         f"pi = {pr['agent_cfg']['stability_min']} **on their own merit**. "
+         f"To clear it, a sensor need only reach the top "
+         f"{pr['agent_cfg']['select_k']} of a "
+         f"{pr['agent_cfg']['n_screen_boot']}-sensor candidate pool in "
+         f"{int(round(pr['agent_cfg']['stability_min'] * pr['agent_cfg']['n_boot']))} "
+         f"of {pr['agent_cfg']['n_boot']} bootstrap replicates -- which noise "
+         f"does routinely. Lowering or raising the guard changes nothing; the "
+         f"bar is in the wrong place."
+         if n["fallback_rate"] < 0.5 else
+         "**The mechanism is the never-return-empty-handed guard.** "
+         f"`AgentRCA.fit` restores the top candidates when nothing clears the "
+         f"threshold (`estimator.py`, `if not surv: surv = reps[:5]`), and on "
+         f"the null it fired on {pct(n['fallback_rate'])} of replicates -- "
+         f"precisely when withholding a report is the only correct action."),
         "",
         f"**Is the loop at least *more* confident on real data?** "
         f"P(real replicate's best support > null replicate's best support) = "
         f"**{sep_p:.3f}**, where 0.5 is no information "
         f"(Mann-Whitney p = {sep['p_real_greater']:.3g}), {sep_read}.", "",
     ]
-    cl = nf.get("real_cleared") or {}
-    if cl:
-        crows = []
-        for key in sorted(cl, key=lambda k: -float(k.split("_")[1])):
-            c = cl[key]
-            crows.append([
-                f"alpha = {key.split('_')[1]}", f"{c['tau']:.3f}",
-                f"{c['n_cleared_mean']:.2f}",
-                pct(c["replicates_with_none"]),
-            ])
+    return body
+
+
+def nf_cfg(ab):
+    """The agent config behind an abstain run, if the source JSON is at hand."""
+    src = (ab.get("protocol") or {}).get("source")
+    if not src:
+        return None
+    d = read_json(ROOT / src) or read_json(src)
+    return ((d or {}).get("protocol") or {}).get("agent_cfg")
+
+
+def sec_abstain(ab):
+    """The price of letting the pipeline report nothing."""
+    if not ab:
+        return []
+    pr = ab["protocol"]
+    base = ab["no_rule_baseline"]
+    rows = []
+    for key in sorted(ab["levels"], key=lambda k: -ab["levels"][k]["alpha"]):
+        L = ab["levels"][key]
+        rows.append([
+            f"{L['alpha']:g}", f"{L['tau_mean']:.3f}",
+            f"{pct(L['null_abstention_heldout'])} "
+            f"(target {pct(L['null_abstention_target'], 0)})",
+            f"{L['null_false_discoveries_heldout']:.2f}",
+            pct(L["real_abstention"]),
+            f"{L['real_reported_mean']:.2f}",
+        ])
+    rows.append(["-- none --", "--", pct(base["null_abstention"]),
+                 f"{base['null_reported_mean']:.2f}", pct(0.0),
+                 f"{base['real_reported_mean']:.2f}"])
+    mid = ab["levels"].get("alpha_0.05") or list(ab["levels"].values())[0]
+    n_boot = ((ab.get("protocol") or {}).get("n_boot")
+              or (nf_cfg(ab) or {}).get("n_boot"))
+    body = [
+        "### What it would cost to let it say nothing", "",
+        f"Same run, no refits: every figure below is a function of the "
+        f"per-replicate suspect supports in `runs/null_fdr.json`, computed by "
+        f"`scripts/abstain.py` into `runs/abstain.json`.", "",
+        f"**The rule.** {pr['rule']}.", "",
+        f"**The calibration is held out.** {pr['why_split']}, so "
+        f"{pr['calibration']}.", "",
+        table(rows, ["alpha", "tau", "held-out null: reports nothing",
+                     "held-out null: false discoveries",
+                     "real labels: reports nothing",
+                     "real labels: suspects reported"]), "",
+        f"At alpha = {mid['alpha']:g} the honest SECOM report is "
+        f"**{mid['real_reported_mean']:.2f} sensors on average, and empty "
+        f"{pct(mid['real_abstention'])} of the time** -- against the "
+        f"{base['real_reported_mean']:.1f} the pipeline prints today. That is "
+        f"the finding stated as a deliverable: this dataset supports about one "
+        f"named suspect, sometimes none, and the current report's length is "
+        f"not evidence about the process.", "",
+        f"**The rule is itself slightly optimistic, and the table says so.** "
+        f"Held-out abstention on the null lands at "
+        f"{pct(mid['null_abstention_heldout'])} against a nominal "
+        f"{pct(mid['null_abstention_target'], 0)}, because tau is a quantile "
+        f"estimated from finitely many null replicates and a point estimate of "
+        f"an upper quantile is biased low. Closing that gap means more null "
+        f"replicates or an upper confidence bound on the quantile rather than "
+        f"the quantile itself; it is not closed here, and the shortfall is "
+        f"reported rather than rounded away.", "",
+        (f"**The bar sits on a coarse grid.** Support is a fraction of "
+         f"{n_boot} bootstrap replicates, so it takes only {n_boot + 1} "
+         f"distinct values and tau cannot be placed between them. At the "
+         f"strictest level here tau lands at or next to the ceiling, which is "
+         f"why the alpha = 0.01 row buys little over alpha = 0.05: there is no "
+         f"room above it. Finer control needs more bootstrap replicates inside "
+         f"the loop, which costs linearly and was not spent here."
+         if n_boot else
+         "**The bar sits on a grid** set by how many bootstrap replicates the "
+         "loop runs, and cannot be placed between grid points."), "",
+        "`AgentRCA(report_tau=...)` implements the rule. It governs "
+        "`reported_` only -- `selected_` and `predict_proba` are byte-identical "
+        "with and without it, asserted in "
+        "`tests/test_null.py::test_report_tau_lets_the_loop_abstain_on_pure_noise` "
+        "-- so switching abstention on cannot move any AUC in this repo, and "
+        "the prediction and attribution claims stay separable.", "",
+    ]
+    st = ab.get("null_structure")
+    if st:
+        floor = st["random_floor_top5"]
+        o_null = st["null"]["top5_pairwise_overlap"]
+        o_real = st["real"]["top5_pairwise_overlap"]
         body += [
-            "**What survives a null-calibrated threshold.** Taking "
-            "tau(alpha) as the (1-alpha) quantile of the null's best support "
-            "-- Westfall-Young max-statistic control, family-wise over the "
-            "sensors screened in a replicate -- and asking how many real-label "
-            "suspects clear it:", "",
-            table(crows, ["level", "tau", "real suspects clearing tau (mean)",
-                          "replicates clearing none"]), "",
-            "This is the honest version of the suspect list, and it is much "
-            "shorter than the one the loop prints today. It is also a "
-            "one-line change to enforce, and it gives the pipeline something "
-            "it currently lacks: the ability to say *nothing here is above "
-            "noise*.", "",
+            "### Is the null unfairly easy?", "",
+            "One alternative would deflate all of the above: permuting labels "
+            "leaves the sensor *correlation* structure intact, so perhaps the "
+            "loop is reporting that structure rather than inventing anything. "
+            "If so, null replicates would keep naming the same sensors as each "
+            "other. They do not:", "",
+            table([
+                ["null replicates agree with each other", f"{o_null:.3f}",
+                 f"{st['null']['n_replicates_top5']} replicates"],
+                ["a uniformly random top-5 would agree", f"{floor:.3f}",
+                 f"5 / {st['n_eff_sensors']} surviving sensors"],
+                ["real-label replicates agree with each other", f"{o_real:.3f}",
+                 f"{st['real']['n_replicates_top5']} replicates"],
+                ["distinct sensors the null ever named",
+                 f"{st['null']['distinct_sensors_ever_named']}", "of "
+                 f"{st['n_eff_sensors']}"],
+            ], ["mean pairwise top-5 overlap", "value", "over"]), "",
+            f"At {o_null:.3f} against a floor of {floor:.3f}, the null's "
+            f"suspects are freshly invented on each replicate rather than a "
+            f"stable artefact of the correlation structure. The alternative "
+            f"does not hold, and the false-discovery rate stands.", "",
+            f"**The {o_real:.3f} is not comparable to this repo's top-5 "
+            f"stability KPI and must not be read as one.** These replicates "
+            f"perturb only the loop's internal random seed on the full wafer "
+            f"set; the KPI perturbs the *wafers*, by bootstrap resampling, "
+            f"which is a far harder test and is why it reads much lower in the "
+            f"stability section. The number is here only as the upper "
+            f"reference for the null column beside it.", "",
         ]
     return body
 
@@ -1445,8 +1597,9 @@ def build(runs: Path):
     dr = read_json(runs / "drift.json")
     rsw = read_json(runs / "rolling_sweep.json")
     nf = read_json(runs / "null_fdr.json")
+    ab = read_json(runs / "abstain.json")
     iv = read_json(runs / "invariance.json")
-    L += sec_headline(ev, st, sy, sw, prof, dr, rsw)
+    L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
@@ -1456,6 +1609,7 @@ def build(runs: Path):
     L += sec_sweep(sw)
     L += sec_stability(st, prof)
     L += sec_null_fdr(nf)
+    L += sec_abstain(ab)
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
     L += sec_limits(prof, st)
@@ -1495,7 +1649,7 @@ README_BLOCKS = {
     "limits": lambda d: "\n".join(sec_limits(d["prof"], d["st"])[2:]).strip(),
     "headline": lambda d: "\n".join(
         sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"], d["dr"],
-                     d["rs"])[2:]).strip(),
+                     d["rs"], d["nf"], d["ab"])[2:]).strip(),
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),
@@ -1509,7 +1663,8 @@ README_BLOCKS = {
     "drift": lambda d: "\n".join(sec_drift(d["dr"])[2:]).strip(),
     "rolling_sweep": lambda d: "\n".join(
         sec_rolling_sweep(d["rs"], d["ev"])[2:]).strip(),
-    "null_fdr": lambda d: "\n".join(sec_null_fdr(d["nf"])[2:]).strip(),
+    "null_fdr": lambda d: "\n".join(
+        sec_null_fdr(d["nf"])[2:] + sec_abstain(d["ab"])).strip(),
     "invariance": lambda d: "\n".join(sec_invariance(d["iv"])[2:]).strip(),
 }
 
@@ -1524,6 +1679,7 @@ def inject(readme: str, runs: Path) -> str:
         "dr": read_json(runs / "drift.json"),
         "rs": read_json(runs / "rolling_sweep.json"),
         "nf": read_json(runs / "null_fdr.json"),
+        "ab": read_json(runs / "abstain.json"),
         "iv": read_json(runs / "invariance.json"),
     }
     for key, fn in README_BLOCKS.items():
