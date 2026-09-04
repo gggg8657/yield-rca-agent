@@ -9,6 +9,7 @@ Four figures, each one answering a question the tables answer more precisely:
 * ``fig_stability.png``  -- how far is top-5 stability from the KPI?
 * ``fig_protocol.png``   -- how much of the AUC survives a chronological split?
 * ``fig_drift.png``      -- is the process stationary at all?
+* ``fig_reversal.png``   -- does the forward-in-time reversal survive the protocol?
 * ``fig_premise.png``    -- where does the agent loop help, and where does it hurt?
 
 Every value plotted is read from the run JSONs, so the figures cannot drift
@@ -183,13 +184,16 @@ def fig_sparsity(sw, out):
 
 
 def fig_stability(st, out):
-    order = sorted(st["rankers"],
-                   key=lambda r: st["rankers"][r]["bootstrap"]["raw"]["pairwise_overlap"])
+    # a ranker mid-measurement may have bootstrap results but not yet CV ones
+    ranked = {k: v for k, v in st["rankers"].items()
+              if "bootstrap" in v and "cv_train" in v}
+    order = sorted(ranked,
+                   key=lambda r: ranked[r]["bootstrap"]["raw"]["pairwise_overlap"])
     fig, ax = plt.subplots(figsize=(7.2, 0.62 * len(order) + 1.9))
     _grid(ax)
     h = 0.36
     for i, name in enumerate(order):
-        r = st["rankers"][name]
+        r = ranked[name]
         for k, (scheme, c) in enumerate((("bootstrap", "#2a78d6"),
                                          ("cv_train", "#eb6834"))):
             v = r[scheme]["raw"]["pairwise_overlap"]
@@ -264,6 +268,38 @@ def fig_protocol(ev, out):
         Line2D([], [], marker="o", linestyle="", markersize=7, color="#eb6834",
                label="chronological 70/30 split"),
     ], ncol=2)
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def fig_reversal(rs, out):
+    """Sign stable, magnitude not: the forward-in-time delta at each block count."""
+    per = rs["per_block_count"]
+    counts = [b for b in sorted(per, key=lambda b: int(b))
+              if "agent_vs_rf_all" in per[b]]
+    fig, ax = plt.subplots(figsize=(6.6, 3.2))
+    _grid(ax, axis="y")
+    xs = range(len(counts))
+    for i, b in enumerate(counts):
+        d = per[b]["agent_vs_rf_all"]
+        ax.plot([i, i], [d["ci_lo"], d["ci_hi"]], color="#2a78d6",
+                linewidth=2, solid_capstyle="round", zorder=3)
+        ax.scatter([i], [d["mean"]], s=46, color="#2a78d6", zorder=4,
+                   edgecolor=SURFACE, linewidth=1.6)
+        ax.text(i + 0.10, d["mean"], f"{d['mean']:+.3f}", fontsize=8,
+                color=INK, va="center", ha="left")
+    ax.axhline(0, color=INK_MUTED, linewidth=1.2, zorder=2)
+    ax.text(-0.52, -0.008, "no difference", fontsize=8, color=INK_2,
+            va="top", ha="left")
+    ax.set_xticks(list(xs),
+                  [f"{b} blocks\n({per[b]['n_origins']} origins)"
+                   for b in counts], fontsize=8.5)
+    ax.set_xlim(-0.55, len(counts) - 0.25)
+    ax.set_ylabel("paired AUC: agent loop minus\nfull-sensor forest")
+    ax.set_title("Forward in time, the sign is stable and the size is not",
+                 fontsize=10.5, loc="left", pad=10)
     fig.tight_layout()
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
@@ -385,6 +421,9 @@ def main():
     dr = read(runs / "drift.json")
     if dr:
         made.append(fig_drift(dr, out / "fig_drift.png"))
+    rs = read(runs / "rolling_sweep.json")
+    if rs:
+        made.append(fig_reversal(rs, out / "fig_reversal.png"))
     sy = read(runs / "synthetic.json")
     if ev and sy and st and "agent" in st.get("rankers", {}):
         made.append(fig_premise(ev, sy, st, out / "fig_premise.png"))
