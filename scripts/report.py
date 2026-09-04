@@ -62,6 +62,11 @@ def crosses_zero(d):
     return d["ci_lo"] <= 0.0 <= d["ci_hi"]
 
 
+def marginal(d, eps=0.005):
+    """A CI that only just reaches zero. Calling that a tie needs a caveat."""
+    return crosses_zero(d) and min(abs(d["ci_lo"]), abs(d["ci_hi"])) < eps
+
+
 # ---------------------------------------------------------------- sections
 def sec_limits(prof, st):
     """The limits list, with its counts read from the run JSONs."""
@@ -96,14 +101,17 @@ def sec_intro(prof, ev):
     """The one-line dataset description, so even the intro is not hand-typed."""
     if not prof:
         return []
-    line = (f"the **UCI SECOM** dataset -- {prof['n_wafers']:,} wafers, "
-            f"{prof['n_sensors']} process sensors, {prof['n_fail']} fails "
-            f"({pct(prof['fail_rate'], 1)}), "
-            f"{pct(prof['missing_frac_overall'], 1)} of cells missing")
+    line = (f"The real data is the **UCI SECOM** dataset: "
+            f"{prof['n_wafers']:,} wafers, {prof['n_sensors']} process "
+            f"sensors, {prof['n_fail']} fails ({pct(prof['fail_rate'], 1)}, a "
+            f"1:{prof['imbalance_ratio']:.0f} imbalance), "
+            f"{pct(prof['missing_frac_overall'], 1)} of cells missing, "
+            f"{prof['time_span_days']:.0f} days of a single campaign.")
     if ev:
-        line += (f" -- under {ev['protocol']['cv']} plus a chronological and a "
-                 f"rolling-origin split")
-    return ["", line + ".", ""]
+        line += (f" It is evaluated under {ev['protocol']['cv']}, plus a "
+                 f"chronological split and a rolling-origin split that never "
+                 f"trains on a wafer produced after the one it scores.")
+    return ["", line, ""]
 
 
 def sec_dataset(prof):
@@ -371,17 +379,30 @@ def sec_sweep(sw):
 
     if tied and smallest_tied is not None:
         names_tied = ", ".join(f"`{a}`" for a, _ in tied)
+        marg = [a for a, _ in tied if marginal(paired[f"{a}__vs__rf_all"])]
         body += [
             f"That does not make the loop uniformly worse. "
-            f"{len(tied)} of the {len(agents)} configurations are "
-            f"statistically indistinguishable from the baseline -- "
-            f"{names_tied} -- and the leanest of those still keeps about "
-            f"{smallest_tied:.0f} sensors. **So the loop can match a "
-            f"full-sensor forest, but only by declining to be a shortlist.** "
-            f"Every configuration that returns a list an engineer would "
-            f"actually work through ({len(worse)} of them, down to "
+            f"{len(tied)} of the {len(agents)} configurations have a paired CI "
+            f"that reaches the baseline -- {names_tied} -- and the leanest of "
+            f"those keeps about {smallest_tied:.0f} sensors. **So the loop can "
+            f"match a full-sensor forest, but only by declining to be a "
+            f"shortlist.** Every configuration returning a list short enough "
+            f"for an engineer to work through ({len(worse)} of them, down to "
             f"{min(n for _, n in worse):.0f} sensors) is measurably worse.", "",
         ]
+        if marg:
+            body += [
+                f"Two caveats on those ties, both in the direction of not "
+                f"over-claiming. {len(marg)} of them "
+                f"({', '.join(f'`{a}`' for a in marg)}) have a CI that only "
+                f"just touches zero, which is a boundary case rather than a "
+                f"demonstrated equivalence. And this sweep runs "
+                f"{auc['n_folds']} folds where the headline table runs "
+                f"{25 if auc['n_folds'] != 25 else auc['n_folds']}, so its "
+                f"intervals are wider and it has *less* power to separate arms "
+                f"-- a tie here is weaker evidence than a tie there. The "
+                f"headline comparison is the one with the folds.", "",
+            ]
     nodrop = [a for a in per if a.startswith("agent_no_drop")]
     if nodrop:
         nd = max(nodrop, key=lambda a: per[a]["mean"])
@@ -534,7 +555,7 @@ def sec_stability(st):
 
 
 def sec_synthetic(sy):
-    if not sy:
+    if not sy or "agent" not in sy.get("recovery", {}):
         return []
     rec, auc = sy["recovery"], sy["auc"]
     k = sy["protocol"]["recovery"].split("-")[0].replace("top", "").strip() or "5"
@@ -586,8 +607,8 @@ def sec_synthetic(sy):
     ]
 
 
-def sec_headline(ev, st, sy, sw):
-    """The five sentences a reader should leave with, computed not asserted."""
+def sec_headline(ev, st, sy, sw, prof=None):
+    """The handful of sentences a reader should leave with, computed not asserted."""
     if not ev:
         return []
     auc = ev["auc"]
@@ -622,15 +643,24 @@ def sec_headline(ev, st, sy, sw):
                 and crosses_zero(paired[f"{a}__vs__rf_all"])]
         if tied:
             lean, n_lean = min(tied, key=lambda t: t[1])
+            dl = paired[f"{lean}__vs__rf_all"]
+            clear = [(a, n) for a, n in tied
+                     if not marginal(paired[f"{a}__vs__rf_all"])]
             L.append(
                 f"- **Sparsity is the price, and it is not negotiable.** "
                 f"Sweeping the loop's settings, AUC tracks how many sensors "
-                f"survive: the leanest configuration that still ties the "
-                f"baseline (`{lean}`, {signed(paired[f'{lean}__vs__rf_all'], 3)}) "
-                f"keeps about {n_lean:.0f} of them. The loop can match a "
-                f"full-sensor forest, but only by declining to be a "
-                f"shortlist -- every setting that returns a list an engineer "
-                f"would work through is measurably worse.")
+                f"survive. The leanest configuration whose paired CI still "
+                f"reaches the baseline is `{lean}` at {signed(dl)}, keeping "
+                f"about {n_lean:.0f} sensors"
+                + (f" -- but that CI only just touches zero, so read it as a "
+                   f"boundary case rather than a tie; the leanest "
+                   f"*unambiguous* tie keeps about "
+                   f"{min(n for _, n in clear):.0f}"
+                   if marginal(dl) and clear else "")
+                + ". The loop can match a full-sensor forest, but only by "
+                  "declining to be a shortlist -- every setting that returns "
+                  "a list short enough for an engineer to work through is "
+                  "measurably worse.")
     if st and "agent" in st["rankers"]:
         a = st["rankers"]["agent"]["bootstrap"]
         cvs = st["rankers"]["agent"]["cv_train"]
@@ -654,18 +684,30 @@ def sec_headline(ev, st, sy, sw):
             f"{st['effective_sensors']} sensors come out on top is barely "
             f"determined.")
     worst = min(ch, key=lambda a_: ch[a_]["auc"] if a_ != "majority" else 9)
+    ro = ev.get("rolling_origin")
+    ro_txt = ""
+    if ro:
+        real = [a for a in ro if a != "majority"]
+        best_ro = max(real, key=lambda a: ro[a]["summary"]["mean"])
+        ro_txt = (f" Repeating the exercise at every origin -- train on the "
+                  f"past, test on the next block of wafers -- puts the best "
+                  f"arm at {ro[best_ro]['summary']['mean']:.3f} "
+                  f"(`{best_ro}`), so this is not one unlucky split.")
     L.append(
         f"- **Shuffled CV flatters this dataset.** Train on the earliest "
         f"{ev['protocol']['chronological']['n_train']} wafers and test on the "
         f"last {ev['protocol']['chronological']['n_test']}, and the best "
         f"baseline falls from {rf['mean']:.3f} to "
-        f"**{ch['rf_all']['auc']:.3f}** -- near chance. Every arm collapses "
-        f"(worst: `{worst}` at {ch[worst]['auc']:.3f}). Over 90 days of fab "
-        f"history the sensor distributions drift, and a shuffled split lets "
-        f"the model interpolate across drift it would never see in "
-        f"production. The KPI is stated against the shuffled protocol, so that "
-        f"is what the scorecard reports -- but the chronological number is the "
-        f"one an engineer should believe.")
+        f"**{ch['rf_all']['auc']:.3f}** -- near chance, with every arm "
+        f"collapsing (worst: `{worst}` at {ch[worst]['auc']:.3f})."
+        + ro_txt
+        + f" Over the {prof['time_span_days']:.0f} days of a single campaign "
+          f"the sensor distributions drift, and a shuffled split lets the "
+          f"model interpolate across drift it would never see in production. "
+          f"The KPI is stated against the shuffled protocol, so that is what "
+          f"the scorecard reports -- but the forward-in-time number is the one "
+          f"an engineer should believe."
+        if prof else "")
     if sy:
         r = sy["recovery"]["agent"]
         L.append(
@@ -682,7 +724,7 @@ def sec_headline(ev, st, sy, sw):
 
 
 def sec_kpi(ev, st, prof):
-    if not (ev and st):
+    if not (ev and st and "agent" in st.get("rankers", {})):
         return []
     rf = ev["auc"]["per_arm"]["rf_all"]
     ag_auc = ev["auc"]["per_arm"]["agent_rf"]
@@ -756,7 +798,7 @@ def build(runs: Path):
               f"numpy {e['numpy']}; the cross-validation in "
               f"`runs/secom_eval.json` took {e['cv_wall_min']:.1f} min on 16 "
               "workers.", ""]
-    L += sec_headline(ev, st, sy, sw)
+    L += sec_headline(ev, st, sy, sw, prof)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
@@ -800,7 +842,7 @@ README_BLOCKS = {
     "intro_data": lambda d: "\n".join(sec_intro(d["prof"], d["ev"])).strip(),
     "limits": lambda d: "\n".join(sec_limits(d["prof"], d["st"])[2:]).strip(),
     "headline": lambda d: "\n".join(
-        sec_headline(d["ev"], d["st"], d["sy"], d["sw"])[2:]).strip(),
+        sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"])[2:]).strip(),
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),
