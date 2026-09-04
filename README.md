@@ -244,8 +244,13 @@ A uniformly random ranker scores 1.1% raw (5 of 474 surviving sensors) and 1.4% 
 The measurements point at one configuration, and it is not the one that scores
 best on a slide:
 
-1. **Predict with every sensor.** Selection costs AUC monotonically on SECOM;
-   the signal is diffuse. `rf_all` is the model to deploy.
+1. **Predict with every sensor — with one asterisk.** Under the shuffled
+   protocol selection costs AUC monotonically, because the signal is diffuse,
+   so `rf_all` is the model to deploy. The asterisk is that forward in time
+   the ordering reverses and the sparse arms come out ahead; that comparison
+   has four origins behind it and its interval includes zero, so it is a
+   reason to monitor and re-measure as wafers accumulate, not a reason to ship
+   the sparse model today.
 2. **Report with the loop, and quote its stability.** `AgentRCA.report()`
    returns the ranked survivors with each one's bootstrap re-selection
    frequency. Used this way the loop costs nothing predictive — the AUC is the
@@ -253,9 +258,11 @@ best on a slide:
    report being over-read. `PredictAllReportFew` is exactly this: full-sensor
    prediction, loop-driven reporting, so the recommendation is code rather
    than advice.
-3. **Believe the chronological split, not the shuffled one.** For a
-   go/no-go decision on deploying a yield predictor, the shuffled-CV number is
-   the optimistic one.
+3. **Believe the forward-in-time split, not the shuffled one.** For a go/no-go
+   decision the shuffled-CV number is the optimistic one, and the drift
+   diagnostics say why: era is far more predictable from these sensors than
+   failure is. Plan on retraining, and treat any fixed model as having a shelf
+   life measured in weeks.
 4. **Treat the suspect list as a work order, not a diagnosis.** At this
    stability, the useful output is a shortlist of signal *families* worth an
    engineer's afternoon.
