@@ -698,3 +698,54 @@ The headline bullet no longer reads "the loop has no measured advantage on any
 axis in this repository". It reads that on every axis measured the loop is
 matched or beaten by a univariate ranker, and it carries both caveats inline.
 That is a weaker claim and it is the one the evidence supports.
+
+---
+
+## Turn 8 (2026-09-04) — H5, written before the run
+
+Three independent measurements now point at the same component, and none of them
+was designed to:
+
+1. `runs/secom_loop_sweep.json` — model-native importance beats held-out
+   permutation AUC-drop at **5 of 5** matched depths (mean +0.021 AUC).
+2. `runs/secom_stability.json` — the permutation-based rankers are the *least*
+   stable in the table (`perm_only` 20.0%, `agent` 22.3%) while `univariate`
+   reaches 46.1%.
+3. `runs/null_fdr_rankers.json` — the loop's bootstrap support separates a real
+   world from a permuted one at 0.873, below every plain ranker but
+   `logreg_coef`.
+
+The common factor is that held-out permutation importance is estimated on an
+inner validation split holding roughly 25 positives, which is a small number to
+estimate an AUC drop from. That is a mechanism, not a mood, and it makes a
+prediction the repo has never tested on its headline KPI.
+
+> **H5.** The loop's top-5 stability is limited by its attribution statistic, not
+> only by the sample-size wall. Re-running the identical loop with
+> `attribution="model"` — one config field, nothing else changed — will raise
+> top-5 bootstrap stability materially above the loop's 22.3%, landing near
+> `rf_impurity`'s 36.5% (which is essentially what model-native attribution
+> ranks by), and **will not** reach the 80% KPI, because the bootstrap
+> perturbation drops ~37% of wafers and no attribution statistic recovers that.
+
+**What distinguishes H5 from the obvious alternative.** The alternative — the
+one `DONE_OVERNIGHT.md` argued for and I have so far accepted — is that the
+sample-size wall dominates and the choice of ranker is second-order. It predicts
+`agent_model` stays near 22.3%. H5 predicts it climbs by roughly 14 points to
+the mid-30s. The gap between those predictions is far larger than the difference
+between the ablation rungs already measured (verification earned +2.1 points,
+correlation grouping +0.2), so the protocol can resolve it.
+
+Both predictions agree the KPI is missed, and I want that on the record *before*
+the run: **H5 is not an attempt to reach 80%, and if it produced 80% I would
+distrust it.** It is an attempt to attribute the miss to a component. The useful
+outcome either way is knowing whether a practitioner should change their
+attribution statistic or go collect more failed wafers — those are very
+different pieces of advice and the repo currently gives the second without
+having tested the first.
+
+**Run:** `scripts/stability_secom.py --only agent_model --append`, same 200
+bootstrap replicates and 25 CV training folds as every other row, so the new row
+is directly comparable to the existing table. Queued behind H4 rather than
+launched now: H4 holds the 16-worker lease and oversubscribing it would slow
+both.

@@ -92,6 +92,23 @@ def rank_agent_no_corr(X, y):
     return AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **cfg).fit(X, y).ranking()
 
 
+def rank_agent_model(X, y):
+    """The full loop with model-native attribution instead of permutation.
+
+    Everything else is the pre-registered operating point. Three separate
+    measurements now point at held-out permutation importance as the loop's
+    noisy component -- it loses to model-native importance at every depth in
+    the sensitivity sweep, the permutation-based rankers are the least stable
+    in this very table, and its bootstrap support separates a real world from a
+    permuted one worse than a univariate ranker's does. If that diagnosis is
+    right, swapping the attribution statistic and changing nothing else should
+    move this number; if the sample-size wall is what binds, it should not.
+    """
+    cfg = dict(AGENT_CFG)
+    cfg["attribution"] = "model"
+    return AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **cfg).fit(X, y).ranking()
+
+
 RANKERS = {
     "univariate": ("per-sensor |AUC - 0.5|", rank_univariate),
     "logreg_coef": ("|standardised logistic coefficient|", rank_logreg_coef),
@@ -102,6 +119,8 @@ RANKERS = {
                       rank_agent_no_corr),
     "agent": ("full agent loop: attribute -> correlate -> verify -> drop",
               rank_agent),
+    "agent_model": ("full loop, model-native attribution instead of permutation",
+                    rank_agent_model),
 }
 
 
