@@ -1604,6 +1604,112 @@ def sec_ranker_fdr(rk):
     return body
 
 
+def sec_depth(ab, ab_k5, rk):
+    """Is it the ranker or the selection depth that limits error control?
+
+    H4. The univariate arm's control jumped when its bootstrap selection depth
+    narrowed, which leaves two readings: either the agent loop's
+    permutation-importance estimator is the binding constraint, or depth
+    dominates ranker choice and the loop moves too. Running the loop's own
+    depth down to the same value separates them, and it is the same script and
+    the same held-out calibration on both sides.
+    """
+    if not (ab and ab_k5):
+        return []
+    a40 = (ab.get("levels") or {}).get("alpha_0.05")
+    a5 = (ab_k5.get("levels") or {}).get("alpha_0.05")
+    if not (a40 and a5):
+        return []
+    rows = [
+        ["agent loop, `select_k = 40` (pre-registered)", f"{a40['tau_mean']:.3f}",
+         pct(a40["null_abstention_heldout"]), f"{a40['real_reported_mean']:.2f}",
+         pct(a40["real_abstention"], 0)],
+        ["agent loop, `select_k = 5`", f"{a5['tau_mean']:.3f}",
+         pct(a5["null_abstention_heldout"]), f"{a5['real_reported_mean']:.2f}",
+         pct(a5["real_abstention"], 0)],
+    ]
+    uni = None
+    if rk:
+        cands = {k: v for k, v in (rk.get("per_ranker") or {}).items()
+                 if v.get("is_variant") and v.get("select_k") == 5
+                 and v.get("ranker") == "univariate"}
+        if cands:
+            uk = max(cands, key=lambda k:
+                     cands[k]["heldout_alpha_0.05"]["null_abstention_heldout"])
+            h = cands[uk]["heldout_alpha_0.05"]
+            uni = h
+            rows.append([f"`{uk}`", f"{h['tau_mean']:.3f}",
+                         pct(h["null_abstention_heldout"]),
+                         f"{h['real_reported_mean']:.2f}",
+                         pct(h["real_abstention"], 0)])
+    d_ctl = a5["null_abstention_heldout"] - a40["null_abstention_heldout"]
+    body = [
+        "### Ranker or depth? (the symmetric run)", "",
+        "The table above tunes the baseline's selection depth and leaves the "
+        "loop at its pre-registered one, which answers *would something "
+        "simpler have sufficed* and not *is the architecture worse at equal "
+        "effort*. This is the second question, run with the loop's depth as "
+        "the only thing changed. Priced by `scripts/abstain.py` on both sides, "
+        "so the calibration is identical.", "",
+        table(rows, ["arm", "tau", "no-cause worlds kept silent",
+                     "suspects reported", "reports nothing"]), "",
+    ]
+    if d_ctl > 0.02:
+        body += [
+            f"**Depth moves the loop too**, by "
+            f"{d_ctl * 100:+.1f} points of error control "
+            f"({pct(a40['null_abstention_heldout'])} to "
+            f"{pct(a5['null_abstention_heldout'])}). So the constraint that "
+            f"produced the loop's low control was mostly its selection depth, "
+            f"not its permutation-importance estimator -- which is the more "
+            f"useful finding for anyone building one of these, because depth "
+            f"is a free parameter and the estimator is the architecture.", "",
+        ]
+    elif d_ctl < -0.02:
+        body += [
+            f"**Narrowing the depth makes the loop worse**, by "
+            f"{d_ctl * 100:.1f} points "
+            f"({pct(a40['null_abstention_heldout'])} to "
+            f"{pct(a5['null_abstention_heldout'])}), so the two arms do not "
+            f"respond to depth the same way and the loop's pre-registered "
+            f"setting was the better one for it.", "",
+        ]
+    else:
+        body += [
+            f"**Depth barely moves the loop** "
+            f"({pct(a40['null_abstention_heldout'])} to "
+            f"{pct(a5['null_abstention_heldout'])}, "
+            f"{d_ctl * 100:+.1f} points), while it moved the univariate arm "
+            f"substantially. The loop's binding constraint is therefore its "
+            f"permutation-importance estimator rather than the depth it "
+            f"selects at -- and that is a property of the architecture, not a "
+            f"parameter someone can turn.", "",
+        ]
+    if uni:
+        gap5 = uni["null_abstention_heldout"] - a5["null_abstention_heldout"]
+        body += [
+            f"At matched depth the univariate ranker is still ahead on "
+            f"control, by {gap5 * 100:+.1f} points "
+            f"({pct(uni['null_abstention_heldout'])} against "
+            f"{pct(a5['null_abstention_heldout'])})"
+            + (f", and reports {uni['real_reported_mean']:.2f} suspects "
+               f"against {a5['real_reported_mean']:.2f}."
+               if uni["real_reported_mean"] > a5["real_reported_mean"] else
+               f", though the loop now reports "
+               f"{a5['real_reported_mean']:.2f} suspects against "
+               f"{uni['real_reported_mean']:.2f}.")
+            + " That is the equal-effort comparison, and it is the one the "
+              "README's conclusion should rest on."
+            if gap5 > 0.005 else
+            f"At matched depth the two are level on control "
+            f"({pct(uni['null_abstention_heldout'])} for univariate against "
+            f"{pct(a5['null_abstention_heldout'])} for the loop), so at equal "
+            f"effort neither has an error-control advantage and the loop's "
+            f"extra machinery buys nothing on this axis either.", "",
+        ]
+    return body
+
+
 def sec_invariance(iv):
     """Whether the reported suspects are associational or something stronger."""
     if not iv:
@@ -1856,6 +1962,7 @@ def build(runs: Path):
     ab = read_json(runs / "abstain.json")
     iv = read_json(runs / "invariance.json")
     rk = read_json(runs / "null_fdr_rankers.json")
+    ab5 = read_json(runs / "abstain_k5.json")
     L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab, rk)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
@@ -1868,6 +1975,7 @@ def build(runs: Path):
     L += sec_null_fdr(nf)
     L += sec_abstain(ab)
     L += sec_ranker_fdr(rk)
+    L += sec_depth(ab, ab5, rk)
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
     L += sec_limits(prof, st)
@@ -1923,7 +2031,8 @@ README_BLOCKS = {
         sec_rolling_sweep(d["rs"], d["ev"])[2:]).strip(),
     "null_fdr": lambda d: "\n".join(
         sec_null_fdr(d["nf"])[2:] + sec_abstain(d["ab"])).strip(),
-    "ranker_fdr": lambda d: "\n".join(sec_ranker_fdr(d["rk"])[2:]).strip(),
+    "ranker_fdr": lambda d: "\n".join(
+        sec_ranker_fdr(d["rk"])[2:] + sec_depth(d["ab"], d["ab5"], d["rk"])).strip(),
     "invariance": lambda d: "\n".join(sec_invariance(d["iv"])[2:]).strip(),
 }
 
@@ -1941,6 +2050,7 @@ def inject(readme: str, runs: Path) -> str:
         "ab": read_json(runs / "abstain.json"),
         "iv": read_json(runs / "invariance.json"),
         "rk": read_json(runs / "null_fdr_rankers.json"),
+        "ab5": read_json(runs / "abstain_k5.json"),
     }
     for key, fn in README_BLOCKS.items():
         pat = re.compile(
