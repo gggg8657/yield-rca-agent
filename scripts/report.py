@@ -47,6 +47,16 @@ def ci(v, nd=3):
     return f"{v['mean']:.{nd}f} [{v['ci_lo']:.{nd}f}, {v['ci_hi']:.{nd}f}]"
 
 
+def ci01(v, nd=2):
+    """CI for a quantity bounded in [0, 1], clipped at the bounds.
+
+    A recall of 0.98 has a normal-approximation interval reaching past 1.0.
+    Printing that would be sloppier than clipping it and saying so.
+    """
+    lo, hi = max(0.0, v["ci_lo"]), min(1.0, v["ci_hi"])
+    return f"{v['mean']:.{nd}f} [{lo:.{nd}f}, {hi:.{nd}f}]"
+
+
 def signed(v, nd=4):
     return f"{v['mean']:+.{nd}f} [{v['ci_lo']:+.{nd}f}, {v['ci_hi']:+.{nd}f}]"
 
@@ -738,9 +748,11 @@ def sec_stability(st):
     return body
 
 
-def sec_synthetic(sy):
+def sec_synthetic(sy, ev=None):
     if not sy or "agent" not in sy.get("recovery", {}):
         return []
+    secom_delta = (ev or {}).get("auc", {}).get("paired", {}).get(
+        "agent_rf__vs__rf_all")
     rec, auc = sy["recovery"], sy["auc"]
     m_k = re.search(r"top-(\d+)", sy["protocol"]["recovery"])
     k = m_k.group(1) if m_k else str(sy.get("k", 5))
@@ -750,7 +762,7 @@ def sec_synthetic(sy):
         rows.append([
             f"`{m}`",
             f"{r['topk_hits']['mean']:.1f} / {sy['records'][0]['n_causal']}",
-            ci(r["topk_recall"], 2),
+            ci01(r["topk_recall"]),
             f"{r['topk_precision']['mean']:.2f}",
             (f"{r['selected_recall']['mean']:.2f}" if "selected_recall" in r else "--"),
             (f"{r['selected_precision']['mean']:.2f}" if "selected_precision" in r else "--"),
@@ -780,13 +792,30 @@ def sec_synthetic(sy):
         f"Held-out AUC on the same generator, "
         f"{sy['protocol']['auc'].replace('per seed, ', '')}:", "",
         table(arows, ["arm", "ROC-AUC (95% CI)", "paired delta vs `rf_all`"]), "",
-        f"With real causal structure present, the loop recovers "
+        f"With real causal structure present the loop recovers "
         f"{ag['topk_recall']['mean']:.0%} of the planted sensors in its top-"
-        f"{k} and its top-5 stability is {pct(ag_stab)} -- the same KPI "
-        f"definition, {v} here. That contrast is the useful part: the machinery "
-        f"is not broken, and the SECOM numbers are a statement about SECOM "
-        f"(diffuse signal, 104 fails, no ground truth) rather than about the "
-        f"pipeline.", "",
+        f"{k}, and its top-5 stability is {pct(ag_stab)} -- the same "
+        f"definition used on SECOM, {v} here.", "",
+        (f"The AUC ordering flips too, and that is the sharpest statement this "
+         f"repo can make about when the agent loop is worth running. Here "
+         f"`agent_rf` is {signed(auc['paired']['agent_rf__vs__rf_all'], 3)} "
+         f"**above** the full-sensor forest; on SECOM it is "
+         f"{signed(secom_delta, 3)} below it. The loop's premise is that a few "
+         f"sensors genuinely drive the failures. Where that premise holds it "
+         f"wins on both accuracy and stability; where the signal is spread "
+         f"thin across hundreds of weak sensors, enforcing sparsity throws "
+         f"away exactly what the model needed."
+         if secom_delta else
+         f"So the machinery is not broken, and the SECOM numbers are a "
+         f"statement about SECOM rather than about the pipeline."), "",
+        (f"One number in the table deserves its own sentence: the loop's "
+         f"*selected set* has recall {ag['selected_recall']['mean']:.2f} but "
+         f"precision {ag['selected_precision']['mean']:.2f}, because it keeps "
+         f"about {ag['n_selected']['mean']:.0f} sensors to be safe. It finds "
+         f"the causes; it does not claim only the causes. The top-5 is the "
+         f"precise output, the selected set is the recall-oriented one, and "
+         f"the report distinguishes them."
+         if "selected_recall" in ag else ""), "",
         "**These numbers are synthetic and must never be quoted as real-data "
         "results.**", "",
     ]
@@ -932,18 +961,24 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None):
                f"is clear of zero over "
                f"{ev['protocol']['rolling_origin']['n_origins']} origins -- "
                "suggestive, but four origins is four origins."))
-    if sy:
+    if sy and "agent" in sy.get("recovery", {}):
         r = sy["recovery"]["agent"]
-        L.append(
-            f"- **The machinery works where ground truth exists.** On the "
-            f"synthetic generator -- {sy['generator']['n_causal']} genuinely "
-            f"causal sensors among {sy['generator']['p']}, block-correlated "
-            f"noise -- the loop recovers "
-            f"{r['topk_recall']['mean']:.0%} of them in its top 5 with "
-            f"{pct(sy['stability']['agent']['raw']['pairwise_overlap'])} top-5 "
-            f"stability. So the SECOM result is a statement about SECOM, not a "
-            f"broken pipeline. **Recovery is only ever claimed on synthetic "
-            f"data; SECOM has no causal labels and none is reported for it.**")
+        if True:
+            sd = sy["auc"]["paired"].get("agent_rf__vs__rf_all")
+            L.append(
+                f"- **The machinery works where its premise holds.** On the "
+                f"synthetic generator -- {sy['generator']['n_causal']} "
+                f"genuinely causal sensors among {sy['generator']['p']}, "
+                f"block-correlated noise -- the loop recovers "
+                f"{r['topk_recall']['mean']:.0%} of them in its top 5, scores "
+                f"{pct(sy['stability']['agent']['raw']['pairwise_overlap'])} "
+                f"top-5 stability (KPI met), and beats the full-sensor forest "
+                f"by {signed(sd, 3)} AUC -- the *opposite* sign to SECOM. The "
+                f"loop assumes a few sensors drive the failures; where that is "
+                f"true it wins on accuracy and stability, and where the signal "
+                f"is spread thin it throws away what the model needed. "
+                f"**Recovery is only ever claimed on synthetic data; SECOM has "
+                f"no causal labels and none is reported for it.**")
     return ["## Headline", ""] + L + [""]
 
 
@@ -1039,7 +1074,7 @@ def build(runs: Path):
     L += sec_drift(dr)
     L += sec_sweep(sw)
     L += sec_stability(st)
-    L += sec_synthetic(sy)
+    L += sec_synthetic(sy, ev)
     L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
           "The failure mode this dataset invites is deciding *anything* from "
@@ -1082,7 +1117,8 @@ README_BLOCKS = {
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),
     "stability": lambda d: "\n".join(sec_stability(d["st"])[2:]).strip(),
-    "synthetic": lambda d: "\n".join(sec_synthetic(d["sy"])[2:]).strip(),
+    "synthetic": lambda d: "\n".join(
+        sec_synthetic(d["sy"], d["ev"])[2:]).strip(),
     "sweep": lambda d: "\n".join(sec_sweep(d["sw"])[2:]).strip(),
     "rolling": lambda d: "\n".join(
         sec_rolling(d["ev"], d["prof"])[2:]).strip(),

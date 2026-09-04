@@ -12,6 +12,7 @@ Run environment: CPU only, Python 3.11.15, scikit-learn 1.8.0, numpy 2.3.5; the 
 - **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Repeating the exercise at every origin -- train on the past, test on the next block of wafers -- puts the best arm at 0.656 (`agent_rf`), so this is not one unlucky split. Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
 - **And the drift is measured, not assumed.** Label each wafer by *era* instead of outcome -- early 70% versus late 30% -- and the same pipeline separates the two eras from the sensors alone at **0.993** AUC (0.516 with the era label shuffled). The process data says far more about *when* a wafer was made than about *whether it failed*: 70.7% of sensors shift significantly between the first and last time block, and the fail rate itself runs 3.5% to 14.0% across blocks (chi-square p = 1e-07). On a non-stationary process, "the top 5 causes" is not a fixed quantity measured noisily -- it is a quantity that moves while you measure it.
 - **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding.
+- **The machinery works where its premise holds.** On the synthetic generator -- 5 genuinely causal sensors among 200, block-correlated noise -- the loop recovers 98% of them in its top 5, scores 86.8% top-5 stability (KPI met), and beats the full-sensor forest by +0.029 [+0.024, +0.033] AUC -- the *opposite* sign to SECOM. The loop assumes a few sensors drive the failures; where that is true it wins on accuracy and stability, and where the signal is spread thin it throws away what the model needed. **Recovery is only ever claimed on synthetic data; SECOM has no causal labels and none is reported for it.**
 
 ## The data, as it actually arrives
 
@@ -142,6 +143,32 @@ Two perturbation schemes, and the choice matters more than any modelling decisio
 | `perm_only` | SensorAgent only: screen + held-out permutation AUC drop | 20.0% | 20.6% | 32.8% | 34.1% | 34.3% |
 
 A uniformly random ranker scores 1.1% raw (5 of 474 surviving sensors) and 1.4% cluster-aware (5 of 370 clusters), so every row is far clear of chance.
+
+## Synthetic benchmark -- the only place with ground truth
+
+SECOM ships no causal labels, so recovery cannot be scored on it at all. Here it can: 5 of 200 sensors genuinely drive the label, over 1500 wafers at a 7% fail rate with 4% missing cells and block-correlated noise (blocks of 20) so raw correlation alone cannot find the causal set. Averaged over 10 independently generated datasets:
+
+| method | top-5 hits | top-5 recall (95% CI) | top-5 precision | selected recall | selected precision | top-5 stability (pairwise) |
+|---|---|---|---|---|---|---|
+| `agent` | 4.9 / 5 | 0.98 [0.93, 1.00] | 0.98 | 1.00 | 0.37 | 86.8% |
+| `rf_impurity` | 4.6 / 5 | 0.92 [0.82, 1.00] | 0.92 | -- | -- | 78.2% |
+| `univariate` | 4.5 / 5 | 0.90 [0.80, 1.00] | 0.90 | -- | -- | 77.4% |
+
+Held-out AUC on the same generator, StratifiedKFold(5) 50 folds pooled:
+
+| arm | ROC-AUC (95% CI) | paired delta vs `rf_all` |
+|---|---|---|
+| `agent_rf` | 0.947 [0.941, 0.953] | +0.029 [+0.024, +0.033] |
+| `univar_top25_rf` | 0.941 [0.933, 0.948] | +0.023 [+0.019, +0.026] |
+| `rf_all` | 0.918 [0.909, 0.927] | -- |
+
+With real causal structure present the loop recovers 98% of the planted sensors in its top-5, and its top-5 stability is 86.8% -- the same definition used on SECOM, **met** here.
+
+The AUC ordering flips too, and that is the sharpest statement this repo can make about when the agent loop is worth running. Here `agent_rf` is +0.029 [+0.024, +0.033] **above** the full-sensor forest; on SECOM it is -0.042 [-0.058, -0.025] below it. The loop's premise is that a few sensors genuinely drive the failures. Where that premise holds it wins on both accuracy and stability; where the signal is spread thin across hundreds of weak sensors, enforcing sparsity throws away exactly what the model needed.
+
+One number in the table deserves its own sentence: the loop's *selected set* has recall 1.00 but precision 0.37, because it keeps about 14 sensors to be safe. It finds the causes; it does not claim only the causes. The top-5 is the precise output, the selected set is the recall-oriented one, and the report distinguishes them.
+
+**These numbers are synthetic and must never be quoted as real-data results.**
 
 ## Limits
 
