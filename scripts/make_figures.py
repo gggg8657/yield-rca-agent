@@ -8,6 +8,7 @@ Four figures, each one answering a question the tables answer more precisely:
 * ``fig_sparsity.png``   -- what does selecting fewer sensors cost?
 * ``fig_stability.png``  -- how far is top-5 stability from the KPI?
 * ``fig_protocol.png``   -- how much of the AUC survives a chronological split?
+* ``fig_drift.png``      -- is the process stationary at all?
 
 Every value plotted is read from the run JSONs, so the figures cannot drift
 from the tables. Categorical colours are the first three slots of the
@@ -260,6 +261,42 @@ def fig_protocol(ev, out):
     return out
 
 
+def fig_drift(dr, out):
+    """Fail rate per time block -- the label half of the drift diagnosis."""
+    blocks = dr["label_drift"]["per_block"]
+    overall = sum(b["n_fail"] for b in blocks) / sum(b["n"] for b in blocks)
+    fig, ax = plt.subplots(figsize=(6.4, 3.2))
+    _grid(ax, axis="y")
+    xs = [b["block"] for b in blocks]
+    ys = [b["fail_rate"] for b in blocks]
+    ax.bar(xs, ys, width=0.62, color="#2a78d6", zorder=3, edgecolor=SURFACE,
+           linewidth=1.2)
+    for b in blocks:
+        ax.text(b["block"], b["fail_rate"] + 0.004,
+                f"{100*b['fail_rate']:.1f}%\n{b['n_fail']}/{b['n']}",
+                ha="center", va="bottom", fontsize=8, color=INK,
+                linespacing=1.35)
+    ax.axhline(overall, color=INK_MUTED, linestyle=(0, (4, 3)), linewidth=1.2,
+               zorder=4)
+    ax.text(-0.95, overall, f"overall {100*overall:.1f}%", fontsize=8,
+            color=INK_2, va="bottom", ha="left")
+    ax.set_ylim(0, max(ys) * 1.42)
+    ax.set_xlim(-1.05, len(blocks) - 0.4)
+    ax.yaxis.set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda v, _: f"{100*v:.0f}%"))
+    ax.set_xticks(xs, [f"block {i}\n(earliest first)" if i == 0 else f"block {i}"
+                       for i in xs], fontsize=8.5)
+    ax.set_ylabel("fail rate")
+    adv = dr["adversarial"]["auc"]["mean"]
+    ax.set_title(f"The process is non-stationary: fail rate moves across the "
+                 f"campaign\n(and era is predictable from the sensors at "
+                 f"AUC {adv:.3f})", fontsize=10, loc="left", pad=10)
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=str(ROOT / "runs"))
@@ -279,6 +316,9 @@ def main():
         made.append(fig_sparsity(sw, out / "fig_sparsity.png"))
     if st:
         made.append(fig_stability(st, out / "fig_stability.png"))
+    dr = read(runs / "drift.json")
+    if dr:
+        made.append(fig_drift(dr, out / "fig_drift.png"))
     for m in made:
         print(f"wrote {m}")
     if not made:
