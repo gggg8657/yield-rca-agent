@@ -283,3 +283,57 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
         sel = set(self.selected_original_.tolist())
         groups = [g for g in self.groups_ if sel & set(g)]
         return ReporterAgent().write(ranked, groups, stab, names)
+
+
+class PredictAllReportFew(BaseEstimator, ClassifierMixin):
+    """Predict with every sensor; report with the agent loop.
+
+    This is the configuration the SECOM measurements actually point at, made
+    executable so it does not stay advice. Selecting sensors costs held-out
+    AUC there -- monotonically, over the whole sweep -- so the classifier keeps
+    all of them, while the loop runs alongside for its ranked,
+    stability-scored suspect list.
+
+    Its held-out AUC is the full-sensor model's *by construction*: the loop
+    never touches ``predict_proba``. There is nothing to measure about that
+    number beyond the baseline row already in the results, which is the point
+    -- used this way the loop costs nothing predictive, and what it produces is
+    a work order rather than a claim.
+    """
+
+    def __init__(self, predictor=None, rca=None):
+        self.predictor = predictor
+        self.rca = rca
+
+    def _make(self):
+        pred = self.predictor if self.predictor is not None else Pipeline([
+            ("impute", SimpleImputer(strategy="median", keep_empty_features=True)),
+            ("clf", make_rf()[-1]),
+        ])
+        return pred, (self.rca if self.rca is not None else AgentRCA(base="rf"))
+
+    def fit(self, X, y):
+        from .preprocess import SensorCleaner
+
+        X = np.asarray(X, dtype=np.float64)
+        pred, rca = self._make()
+        self.cleaner_ = SensorCleaner().fit(X)
+        self.predictor_ = clone(pred).fit(self.cleaner_.transform(X), y)
+        self.rca_ = clone(rca).fit(X, y)
+        self.classes_ = np.array([0, 1])
+        return self
+
+    def predict_proba(self, X):
+        Xc = self.cleaner_.transform(np.asarray(X, dtype=np.float64))
+        p1 = _pos_score(self.predictor_, Xc)
+        return np.column_stack([1 - p1, p1])
+
+    def predict(self, X):
+        return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
+
+    def report(self, names=None):
+        return self.rca_.report(names)
+
+    @property
+    def selected_original_(self):
+        return self.rca_.selected_original_

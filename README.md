@@ -208,7 +208,9 @@ best on a slide:
    returns the ranked survivors with each one's bootstrap re-selection
    frequency. Used this way the loop costs nothing predictive — the AUC is the
    baseline's by construction — and the stability number is what stops the
-   report being over-read.
+   report being over-read. `PredictAllReportFew` is exactly this: full-sensor
+   prediction, loop-driven reporting, so the recommendation is code rather
+   than advice.
 3. **Believe the chronological split, not the shuffled one.** For a
    go/no-go decision on deploying a yield predictor, the shuffled-CV number is
    the optimistic one.
@@ -272,12 +274,20 @@ Using the loop directly:
 
 ```python
 from yieldrca.data import load_secom
-from yieldrca.estimator import AgentRCA
+from yieldrca.estimator import AgentRCA, PredictAllReportFew
 
 X, y, names = load_secom("data")
+
 rca = AgentRCA(base="rf").fit(X, y)      # fit inside your own CV fold
 print(rca.report(names))                 # ranked survivors + stability
-print(rca.selected_original_)            # sensor indices that survived the drop
+print(rca.selected_original_)            # sensors that survived the drop
+print(rca.ranking())                      # the full reported ranking
+
+# the configuration the results argue for: predict with everything,
+# report with the loop
+m = PredictAllReportFew().fit(X, y)
+m.predict_proba(X)[:, 1]                 # full-sensor forest
+print(m.report(names))                   # the loop's suspect list
 ```
 
 ## Layout
@@ -287,7 +297,8 @@ yieldrca/
   data.py         SECOM loader (+ timestamps) and the synthetic generator
   preprocess.py   SensorCleaner / MissingIndicatorAppender / UnivariateTopK
   attribution.py  held-out permutation importance, screens, correlation groups
-  estimator.py    AgentRCA — the loop as an sklearn estimator
+  estimator.py    AgentRCA — the loop as an sklearn estimator, plus
+                  PredictAllReportFew (predict with all, report with the loop)
   evaluate.py     repeated stratified CV, identical folds, paired deltas
   stability.py    the top-5 stability definition, and its measurement
   agents.py       Sensor / Correlator / Verifier / Reporter (numpy path)

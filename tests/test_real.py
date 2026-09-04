@@ -19,7 +19,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
 
 from yieldrca.data import make_synthetic, secom_profile
-from yieldrca.estimator import AgentRCA, make_logreg
+from yieldrca.estimator import AgentRCA, PredictAllReportFew, make_logreg
 from yieldrca.evaluate import Arm, chronological_split, mean_ci, paired_delta, repeated_cv
 from yieldrca.preprocess import MissingIndicatorAppender, SensorCleaner, UnivariateTopK
 from yieldrca.stability import _overlap_scores, bootstrap_replicates, measure, random_floor
@@ -126,6 +126,21 @@ def test_agent_rca_recovers_planted_causes_on_synthetic():
                  max_select=10, n_boot=5).fit(X, y)
     hits = len(set(m.selected_original_.tolist()) & set(causal.tolist()))
     assert hits >= 2, f"recovered only {hits}/{len(causal)}"
+
+
+def test_predict_all_report_few_predicts_with_every_sensor():
+    """The recommended config: full-sensor prediction, loop-driven reporting."""
+    X, y, names, _ = _small()
+    m = PredictAllReportFew(
+        rca=AgentRCA(base="logreg", n_screen=30, select_k=10,
+                     stability_min=0.3, max_select=6, n_boot=4)).fit(X, y)
+    p = m.predict_proba(X)
+    assert p.shape == (len(y), 2) and np.allclose(p.sum(axis=1), 1.0)
+    # the predictor sees the cleaned matrix, not the loop's shortlist
+    n_kept = len(m.cleaner_.keep_)
+    assert m.predictor_[-1].n_features_in_ == n_kept
+    assert len(m.selected_original_) < n_kept
+    assert m.report(names).startswith("# Yield Root-Cause Report")
 
 
 # ------------------------------------------------------------ leakage canary

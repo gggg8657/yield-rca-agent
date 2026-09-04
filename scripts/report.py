@@ -227,8 +227,8 @@ def sec_secom_auc(ev):
            "obvious baseline on SECOM, it loses to it.**"), "",
         f"The naive-selection control tells us how much of that is selection "
         f"per se rather than this particular selector: univariate top-25 into "
-        f"the same forest is {signed(d_univ, 3)} against the baseline, and the "
-        f"agent loop beats *it* by {signed(d_agent_vs_univ, 3)}"
+        f"the same forest is {signed(d_univ, 3)} against the baseline, and "
+        f"the agent loop differs from *it* by {signed(d_agent_vs_univ, 3)}"
         + (" -- an interval that straddles zero, so the plan/verify machinery "
            "buys no measurable accuracy over ranking each sensor on its own."
            if crosses_zero(d_agent_vs_univ) else
@@ -330,13 +330,14 @@ def sec_sweep(sw):
             (f"{m.get('select_k')} / {m.get('stability_min')} / "
              f"{m.get('max_select')}") if m else "--",
             f"{sw['n_selected_mean'][a]:.1f}" if a in sw["n_selected_mean"]
-            else "all",
+            else "--",
             ci(per[a]),
             "--" if a == "rf_all" else signed(d, 3),
         ])
 
     agents = [(a, per[a]["mean"], sw["n_selected_mean"][a])
-              for a in per if a in sw["n_selected_mean"]]
+              for a in per
+              if a in sw["n_selected_mean"] and a.startswith("agent_")]
     agents.sort(key=lambda x: x[2])
     tied = [(a, n) for a, _, n in agents
             if crosses_zero(paired[f"{a}__vs__rf_all"])]

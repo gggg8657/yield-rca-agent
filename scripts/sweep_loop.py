@@ -44,6 +44,20 @@ def _extras(est):
             "n_candidates": int(est.n_candidates_)}
 
 
+def _n_features(est):
+    """How many columns the final estimator actually saw.
+
+    Reported for the non-agent rows too, so the "sensors selected" column is
+    measured for every arm rather than left blank for the ones that do not
+    call themselves selectors.
+    """
+    e = getattr(est, "best_estimator_", est)
+    steps = getattr(e, "steps", None)
+    last = steps[-1][1] if steps else e
+    n = getattr(last, "n_features_in_", None)
+    return {"n_selected": int(n)} if n is not None else {}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--splits", type=int, default=5)
@@ -55,8 +69,10 @@ def main():
 
     X, y, names = load_secom(a.root)
     arms = [
-        Arm("rf_all", rf_all, "random forest, all sensors", "baseline"),
-        Arm("univar_top25_rf", univar_rf, "univariate top-25 -> RF", "control"),
+        Arm("rf_all", rf_all, "random forest, all sensors", "baseline",
+            extras=_n_features),
+        Arm("univar_top25_rf", univar_rf, "univariate top-25 -> RF", "control",
+            extras=_n_features),
     ]
     for tag, over in GRID:
         for attr in ("permutation", "model"):
