@@ -137,3 +137,21 @@ def chronological_split(t, frac_train=0.7):
     order = np.argsort(t, kind="stable")
     cut = int(round(frac_train * len(order)))
     return order[:cut], order[cut:]
+
+
+def rolling_origin_splits(t, n_blocks=5):
+    """Rolling-origin (expanding-window) splits over contiguous time blocks.
+
+    Train on blocks ``0..k``, test on block ``k+1``, for k = 0 .. n_blocks-2.
+    One chronological split can be one unlucky fortnight; this asks whether the
+    degradation reproduces at every origin. Always trains on the past and tests
+    on the future, which is the only protocol that answers "would this have
+    worked if we had deployed it".
+    """
+    order = np.argsort(t, kind="stable")
+    blocks = np.array_split(order, n_blocks)
+    out = []
+    for k in range(n_blocks - 1):
+        tr = np.concatenate(blocks[: k + 1])
+        out.append((tr, blocks[k + 1]))
+    return out

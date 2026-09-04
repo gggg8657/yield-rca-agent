@@ -63,6 +63,49 @@ def crosses_zero(d):
 
 
 # ---------------------------------------------------------------- sections
+def sec_limits(prof, st):
+    """The limits list, with its counts read from the run JSONs."""
+    if not prof:
+        return []
+    L = [
+        "- **No causal ground truth on SECOM**, so nothing here validates the "
+        "*causal* half of \"root-cause analysis\" on real data. The synthetic "
+        "benchmark is a proxy, and its planted structure is "
+        "additive-logistic, which is kinder than a fab.",
+        f"- **{prof['n_fail']} positives.** That is the binding constraint on "
+        f"both KPIs, and no modelling choice in this repo escapes it. Fixing "
+        f"the stability number needs more failed wafers, not a better ranker.",
+        "- **Sensors are anonymous.** A surviving suspect cannot be mapped to a "
+        "tool or a process step, so a domain expert cannot sanity-check the "
+        "list -- which is exactly the check that would matter most.",
+        "- **Permutation importance is not a causal effect.** It measures what "
+        "a fitted model leans on. Two near-identical sensors split it, and a "
+        "genuine driver the screen missed never gets scored at all.",
+    ]
+    if st:
+        L.append(
+            f"- **The stability metric is protocol-sensitive.** Bootstrap and "
+            f"CV-fold resampling disagree by tens of points on the same "
+            f"ranker (see the table), so any \"top-5 stability\" figure "
+            f"quoted without its perturbation scheme is uninterpretable. This "
+            f"repo reports both and headlines the harder one.")
+    return ["## Limits", ""] + L + [""]
+
+
+def sec_intro(prof, ev):
+    """The one-line dataset description, so even the intro is not hand-typed."""
+    if not prof:
+        return []
+    line = (f"the **UCI SECOM** dataset -- {prof['n_wafers']:,} wafers, "
+            f"{prof['n_sensors']} process sensors, {prof['n_fail']} fails "
+            f"({pct(prof['fail_rate'], 1)}), "
+            f"{pct(prof['missing_frac_overall'], 1)} of cells missing")
+    if ev:
+        line += (f" -- under {ev['protocol']['cv']} plus a chronological and a "
+                 f"rolling-origin split")
+    return ["", line + ".", ""]
+
+
 def sec_dataset(prof):
     if not prof:
         return []
@@ -217,57 +260,152 @@ def sec_secom_auc(ev):
     return body
 
 
+def sec_rolling(ev):
+    if not ev or "rolling_origin" not in ev:
+        return []
+    ro = ev["rolling_origin"]
+    auc = ev["auc"]["per_arm"]
+    ch = ev["chronological"]
+    n_orig = ev["protocol"]["rolling_origin"]["n_origins"]
+    names = sorted(ro, key=lambda a: -ro[a]["summary"]["mean"])
+    rows = []
+    for a in names:
+        per = ro[a]["per_origin"]
+        rows.append([f"`{a}`", f"{auc[a]['mean']:.3f}", f"{ch[a]['auc']:.3f}",
+                     ci(ro[a]["summary"]),
+                     " · ".join(f"{r['auc']:.3f}" for r in per)])
+    real = [a for a in ro if a != "majority"]
+    best = max(real, key=lambda a: ro[a]["summary"]["mean"])
+    sizes = ro[names[0]]["per_origin"]
+    return ["## Does it survive going forward in time?", "",
+            f"One chronological split can be one unlucky fortnight, so the "
+            f"same question is asked at every origin: "
+            f"{ev['protocol']['rolling_origin']['rule']}. That is the only "
+            f"protocol that answers *would this have worked had we deployed "
+            f"it* -- it never trains on a wafer that came after the wafer it "
+            f"scores.", "",
+            table(rows, ["arm", "shuffled CV", "chrono 70/30",
+                         f"rolling origin, mean of {n_orig} (95% CI)",
+                         "per origin"]), "",
+            f"Test-block sizes grow from {sizes[0]['n_test']} wafers "
+            f"({sizes[0]['n_fail_test']} fails) as the training window "
+            f"expands, so the individual origins are noisy -- but the "
+            f"conclusion does not depend on any one of them. The best arm "
+            f"forward in time is `{best}` at "
+            f"{ro[best]['summary']['mean']:.3f} "
+            f"[{ro[best]['summary']['ci_lo']:.3f}, "
+            f"{ro[best]['summary']['ci_hi']:.3f}], against "
+            f"{auc[best]['mean']:.3f} for the same arm under shuffled CV."
+            + (" Every arm's rolling-origin CI includes 0.5."
+               if all(ro[a]["summary"]["ci_lo"] <= 0.5 for a in real) else
+               " At least one arm stays clear of chance.")
+            + " The honest reading is that SECOM's shuffled-CV skill comes "
+              "substantially from interpolating across a 90-day drift, and "
+              "that a yield predictor trained this way should not be expected "
+              "to hold for the next month of wafers without retraining.", ""]
+
+
 def sec_sweep(sw):
     if not sw:
         return []
     auc = sw["auc"]
+    per, paired = auc["per_arm"], auc["paired"]
+    base = per["rf_all"]["mean"]
     rows = []
-    base = auc["per_arm"]["rf_all"]["mean"]
-    order = sorted(auc["per_arm"], key=lambda a: -auc["per_arm"][a]["mean"])
+    order = sorted(per, key=lambda a: -per[a]["mean"])
     for a in order:
         m = sw["arms"][a]["meta"]
-        d = auc["paired"].get(f"{a}__vs__rf_all")
+        d = paired.get(f"{a}__vs__rf_all")
         rows.append([
             f"`{a}`",
             m.get("attribution", "--"),
-            f"{m.get('select_k', '--')} / {m.get('stability_min', '--')} / "
-            f"{m.get('max_select', '--')}" if m else "--",
-            f"{sw['n_selected_mean'].get(a, float('nan')):.1f}"
-            if a in sw["n_selected_mean"] else "--",
-            ci(auc["per_arm"][a]),
+            (f"{m.get('select_k')} / {m.get('stability_min')} / "
+             f"{m.get('max_select')}") if m else "--",
+            f"{sw['n_selected_mean'][a]:.1f}" if a in sw["n_selected_mean"]
+            else "all",
+            ci(per[a]),
             "--" if a == "rf_all" else signed(d, 3),
         ])
-    agents = [(a, auc["per_arm"][a]["mean"], sw["n_selected_mean"].get(a))
-              for a in auc["per_arm"] if a.startswith("agent_")]
-    agents = [x for x in agents if x[2] is not None]
-    spars = sorted(agents, key=lambda x: x[2])
-    nodrop = [a for a in auc["per_arm"] if a.startswith("agent_no_drop")]
-    nodrop_txt = ""
-    if nodrop:
-        nd = max(nodrop, key=lambda a: auc["per_arm"][a]["mean"])
-        gap = auc["per_arm"][nd]["mean"] - base
-        nodrop_txt = (
-            f" The limit row is the sanity check: with the drop step disabled "
-            f"(`stability_min` 0, no cap) `{nd}` lands at "
-            f"{auc['per_arm'][nd]['mean']:.3f}, {gap:+.3f} from the baseline's "
-            f"{base:.3f} -- the loop degrades back onto the baseline as it "
-            f"should, so the gap at the operating point is the selection, not "
-            f"a defect in the wrapper.")
-    return ["## Is the operating point the problem?", "",
-            f"The agent loop's structural settings are pre-registered, not "
-            f"tuned, so the surface around them is published instead of "
-            f"hidden. Same protocol ({sw['protocol']}), "
-            f"{auc['n_folds']} folds:", "",
+
+    agents = [(a, per[a]["mean"], sw["n_selected_mean"][a])
+              for a in per if a in sw["n_selected_mean"]]
+    agents.sort(key=lambda x: x[2])
+    tied = [(a, n) for a, _, n in agents
+            if crosses_zero(paired[f"{a}__vs__rf_all"])]
+    worse = [(a, n) for a, _, n in agents
+             if not crosses_zero(paired[f"{a}__vs__rf_all"])]
+    smallest_tied = min((n for _, n in tied), default=None)
+    # is the trend in sparsity monotone, or is that just an impression?
+    xs = [n for _, _, n in agents]
+    ys = [m for _, m, _ in agents]
+    conc = sum(1 for i in range(len(xs)) for j in range(i + 1, len(xs))
+               if (xs[j] - xs[i]) * (ys[j] - ys[i]) > 0)
+    npairs = len(xs) * (len(xs) - 1) // 2
+    # does the cheaper attribution mode actually lose?
+    by_tag = {}
+    for a in per:
+        m = sw["arms"][a]["meta"]
+        if m.get("attribution"):
+            by_tag.setdefault(m["tag"], {})[m["attribution"]] = per[a]["mean"]
+        matched = [(t, v["model"] - v["permutation"]) for t, v in by_tag.items()
+                   if "model" in v and "permutation" in v]
+    mod_wins = sum(1 for _, d in matched if d > 0)
+
+    body = ["## Is the pre-registered operating point the problem?", "",
+            f"The agent loop's structural settings are fixed in advance rather "
+            f"than tuned, which is only defensible if the surface around them "
+            f"is published instead of hidden. Same protocol as above "
+            f"({sw['protocol']}), {auc['n_folds']} folds, "
+            f"{sw['wall_min']:.0f} min:", "",
             table(rows, ["arm", "attribution", "vote k / threshold / cap",
                          "sensors selected", "ROC-AUC (95% CI)",
                          "paired delta vs `rf_all`"]), "",
-            f"AUC rises monotonically with the number of sensors kept: "
-            f"{spars[0][2]:.0f} sensors gives {spars[0][1]:.3f}, "
-            f"{spars[-1][2]:.0f} gives {spars[-1][1]:.3f}, and all sensors "
-            f"gives {base:.3f}. SECOM's predictive signal is spread thin across "
-            f"many weak sensors rather than concentrated in a few, so *any* "
-            f"sparse root-cause story costs accuracy. No setting of this loop "
-            f"reaches the baseline.{nodrop_txt}", ""]
+            f"AUC tracks how many sensors survive, and it does so almost "
+            f"monotonically: {conc} of the {npairs} (sparsity, AUC) pairs are "
+            f"concordant, from {agents[0][2]:.0f} sensors at "
+            f"{agents[0][1]:.3f} up to {agents[-1][2]:.0f} at "
+            f"{agents[-1][1]:.3f}, against {base:.3f} for using all of them. "
+            f"SECOM's predictive signal is spread thinly over many weak "
+            f"sensors rather than concentrated in a few, so sparsity is not "
+            f"free.", ""]
+
+    if tied and smallest_tied is not None:
+        names_tied = ", ".join(f"`{a}`" for a, _ in tied)
+        body += [
+            f"That does not make the loop uniformly worse. "
+            f"{len(tied)} of the {len(agents)} configurations are "
+            f"statistically indistinguishable from the baseline -- "
+            f"{names_tied} -- and the leanest of those still keeps about "
+            f"{smallest_tied:.0f} sensors. **So the loop can match a "
+            f"full-sensor forest, but only by declining to be a shortlist.** "
+            f"Every configuration that returns a list an engineer would "
+            f"actually work through ({len(worse)} of them, down to "
+            f"{min(n for _, n in worse):.0f} sensors) is measurably worse.", "",
+        ]
+    nodrop = [a for a in per if a.startswith("agent_no_drop")]
+    if nodrop:
+        nd = max(nodrop, key=lambda a: per[a]["mean"])
+        d = paired[f"{nd}__vs__rf_all"]
+        body += [
+            f"The limit row is the sanity check rather than a result: with the "
+            f"drop step disabled (`stability_min` 0, no cap) `{nd}` lands at "
+            f"{per[nd]['mean']:.3f}, {signed(d, 3)} from the baseline. The "
+            f"wrapper degrades back onto the baseline as it should, so the gap "
+            f"at the operating point is the selection doing damage, not a "
+            f"defect in the plumbing.", "",
+        ]
+    if matched:
+        body += [
+            f"One design axis does pay: scoring suspects by the base model's "
+            f"own importance averaged over resamples beats held-out "
+            f"permutation AUC-drop at {mod_wins} of the {len(matched)} matched "
+            f"depths (mean gap "
+            f"{sum(d for _, d in matched) / len(matched):+.3f} AUC). With "
+            f"roughly 25 positives in an inner validation split, the "
+            f"permutation estimate is simply too noisy to rank on, which is "
+            f"the same sample-size story the stability section tells.", "",
+        ]
+    return body
 
 
 def sec_stability(st):
@@ -469,11 +607,30 @@ def sec_headline(ev, st, sy, sw):
         f"- **The agent loop does not beat that baseline -- it loses to it.** "
         f"Same folds, paired per fold: **{signed(d, 3)}** AUC "
         f"({d['wins']} folds better, {d['losses']} worse, Wilcoxon "
-        f"p = {d.get('wilcoxon_p', float('nan')):.1e}). The loop reaches "
-        f"{ag['mean']:.3f}, which misses the KPI on its own. It also fails to "
-        f"separate from a univariate top-25 selection at the same sparsity "
-        f"({signed(d_u, 3)}).",
+        f"p = {d.get('wilcoxon_p', float('nan')):.1e}). At its pre-registered "
+        f"operating point the loop reaches {ag['mean']:.3f} and misses the KPI "
+        f"on its own, and it does not separate from a univariate top-25 "
+        f"selection at the same sparsity ({signed(d_u, 3)}"
+        + (", an interval that includes zero)." if crosses_zero(d_u)
+           else ").")
+        + " The plan/verify machinery is not what is buying the number.",
     ]
+    if sw:
+        per, paired = sw["auc"]["per_arm"], sw["auc"]["paired"]
+        tied = [(a, sw["n_selected_mean"][a]) for a in per
+                if a in sw["n_selected_mean"]
+                and crosses_zero(paired[f"{a}__vs__rf_all"])]
+        if tied:
+            lean, n_lean = min(tied, key=lambda t: t[1])
+            L.append(
+                f"- **Sparsity is the price, and it is not negotiable.** "
+                f"Sweeping the loop's settings, AUC tracks how many sensors "
+                f"survive: the leanest configuration that still ties the "
+                f"baseline (`{lean}`, {signed(paired[f'{lean}__vs__rf_all'], 3)}) "
+                f"keeps about {n_lean:.0f} of them. The loop can match a "
+                f"full-sensor forest, but only by declining to be a "
+                f"shortlist -- every setting that returns a list an engineer "
+                f"would work through is measurably worse.")
     if st and "agent" in st["rankers"]:
         a = st["rankers"]["agent"]["bootstrap"]
         cvs = st["rankers"]["agent"]["cv_train"]
@@ -534,9 +691,10 @@ def sec_kpi(ev, st, prof):
     v2, ok2 = verdict(ag_auc["mean"], KPI_AUC)
     v3, ok3 = verdict(ag["raw"]["pairwise_overlap"], KPI_STABILITY)
     v4, ok4 = verdict(ag["cluster"]["pairwise_overlap"], KPI_STABILITY)
+    ci_clears = rf["ci_lo"] >= KPI_AUC
     rows = [
         [f"SECOM ROC-AUC >= {KPI_AUC:.2f}", "best plain baseline (`rf_all`)",
-         ci(rf), v1],
+         ci(rf), v1 + ("" if ci_clears else " (point estimate; CI spans it)")],
         [f"SECOM ROC-AUC >= {KPI_AUC:.2f}", "agent loop (`agent_rf`)",
          ci(ag_auc), v2],
         [f"top-5 cause stability >= {KPI_STABILITY:.0%}",
@@ -565,7 +723,18 @@ def sec_kpi(ev, st, prof):
              + " on the primary bootstrap protocol. The one-line summary is "
                "that on SECOM this pipeline is a usable *predictor* and an "
                "unreliable *root-cause attributor*, and the second half of "
-               "that sentence is the finding."), ""]
+               "that sentence is the finding."), "",
+            (f"One caveat on the first row, stated rather than buried: the "
+             f"point estimate {rf['mean']:.3f} clears {KPI_AUC:.2f}, but the "
+             f"95% CI over folds runs "
+             f"[{rf['ci_lo']:.3f}, {rf['ci_hi']:.3f}] and so includes values "
+             f"below the target. \"Met\" here means the mean of "
+             f"{ev['auc']['n_folds']} folds is above the line, not that the "
+             f"line is cleared with confidence."
+             if not ci_clears else
+             f"The CI's lower bound ({rf['ci_lo']:.3f}) is itself above "
+             f"{KPI_AUC:.2f}, so that row is not resting on a point "
+             f"estimate."), ""]
 
 
 # ---------------------------------------------------------------- assembly
@@ -591,9 +760,11 @@ def build(runs: Path):
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
+    L += sec_rolling(ev)
     L += sec_sweep(sw)
     L += sec_stability(st)
     L += sec_synthetic(sy)
+    L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
           "The failure mode this dataset invites is deciding *anything* from "
           "all 1,567 wafers and then cross-validating. Held inside the fold, "
@@ -626,6 +797,8 @@ def build(runs: Path):
 
 
 README_BLOCKS = {
+    "intro_data": lambda d: "\n".join(sec_intro(d["prof"], d["ev"])).strip(),
+    "limits": lambda d: "\n".join(sec_limits(d["prof"], d["st"])[2:]).strip(),
     "headline": lambda d: "\n".join(
         sec_headline(d["ev"], d["st"], d["sy"], d["sw"])[2:]).strip(),
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
@@ -634,6 +807,7 @@ README_BLOCKS = {
     "stability": lambda d: "\n".join(sec_stability(d["st"])[2:]).strip(),
     "synthetic": lambda d: "\n".join(sec_synthetic(d["sy"])[2:]).strip(),
     "sweep": lambda d: "\n".join(sec_sweep(d["sw"])[2:]).strip(),
+    "rolling": lambda d: "\n".join(sec_rolling(d["ev"])[2:]).strip(),
 }
 
 

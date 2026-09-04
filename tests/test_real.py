@@ -94,6 +94,21 @@ def test_agent_rca_fits_and_maps_indices_back():
     assert all(0.0 <= v <= 1.0 for v in m.stability_.values())
 
 
+def test_agent_ranking_puts_survivors_first():
+    """The reported ranking must lead with what survived verification."""
+    X, y, names, _ = _small()
+    m = AgentRCA(base="logreg", n_screen=30, select_k=10, stability_min=0.3,
+                 max_select=6, n_boot=4).fit(X, y)
+    r = m.ranking()
+    n_sel = len(m.selected_original_)
+    assert set(r[:n_sel].tolist()) == set(m.selected_original_.tolist())
+    assert len(set(r.tolist())) == len(r), "ranking must not repeat a sensor"
+    assert set(r.tolist()) >= set(j for j, _ in m.ranked_)
+    imp = {int(j): v for j, v in m.ranked_}
+    lead = [imp[int(j)] for j in r[:n_sel]]
+    assert lead == sorted(lead, reverse=True), "survivors must be impact-ordered"
+
+
 def test_agent_rca_report_names_selected_sensors():
     X, y, names, _ = _small()
     m = AgentRCA(base="logreg", n_screen=30, select_k=10, stability_min=0.3,

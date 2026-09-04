@@ -65,8 +65,9 @@ def _rank_rf(X, y):
 
 
 def _rank_agent(X, y):
-    m = AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **SYN_CFG).fit(X, y)
-    return np.array([j for j, _ in m.ranked_], dtype=int)
+    """The loop's reported ranking -- survivors first (see AgentRCA.ranking)."""
+    return AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **SYN_CFG) \
+        .fit(X, y).ranking()
 
 
 def _one_seed(seed, k, cv_splits):

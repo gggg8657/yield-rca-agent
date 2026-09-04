@@ -80,17 +80,16 @@ def rank_perm_only(X, y):
 
 
 def rank_agent(X, y):
-    """Full loop: the CorrelatorAgent's representatives, importance-ordered."""
-    m = AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **AGENT_CFG).fit(X, y)
-    return np.array([j for j, _ in m.ranked_], dtype=int)
+    """Full loop: attribute -> correlate -> verify -> drop, as reported."""
+    return AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **AGENT_CFG) \
+        .fit(X, y).ranking()
 
 
 def rank_agent_no_corr(X, y):
     """Ablation: same loop with correlation grouping switched off."""
     cfg = dict(AGENT_CFG)
     cfg["corr_thresh"] = 1.01  # no two sensors ever group
-    m = AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **cfg).fit(X, y)
-    return np.array([j for j, _ in m.ranked_], dtype=int)
+    return AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **cfg).fit(X, y).ranking()
 
 
 RANKERS = {
@@ -99,7 +98,7 @@ RANKERS = {
     "rf_impurity": ("random-forest impurity importance", rank_rf_impurity),
     "perm_only": ("SensorAgent only: screen + held-out permutation AUC drop",
                   rank_perm_only),
-    "agent_no_corr": ("full loop, correlation grouping off (ablation)",
+    "agent_no_corr": ("attribute -> verify -> drop, correlation grouping off",
                       rank_agent_no_corr),
     "agent": ("full agent loop: attribute -> correlate -> verify -> drop",
               rank_agent),
@@ -114,7 +113,12 @@ def main():
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--cluster-thresh", type=float, default=0.99)
     ap.add_argument("--jobs", type=int, default=16)
-    ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--only", nargs="*", default=None,
+                    help="measure just these rankers (keys of RANKERS)")
+    ap.add_argument("--append", action="store_true",
+                    help="merge into an existing --out rather than starting "
+                         "fresh; replicates and seeds are unchanged, so the "
+                         "rows stay comparable")
     ap.add_argument("--root", default="data")
     ap.add_argument("--out", default="runs/secom_stability.json")
     a = ap.parse_args()
@@ -130,6 +134,9 @@ def main():
         "cv_train": cv_train_replicates(X, y, a.splits, a.repeats, SEED),
     }
     todo = a.only or list(RANKERS)
+    prev = {}
+    if a.append and Path(a.out).exists():
+        prev = json.loads(Path(a.out).read_text())
     out = {
         "definition_module": "yieldrca/stability.py",
         "k": a.k,
@@ -139,7 +146,8 @@ def main():
         "random_floor_raw": random_floor(p_eff, a.k),
         "random_floor_cluster": random_floor(n_clusters_eff, a.k),
         "schemes": {k: {"n_replicates": len(v)} for k, v in schemes.items()},
-        "rankers": {},
+        "rankers": {k: v for k, v in prev.get("rankers", {}).items()
+                    if k not in todo},
     }
     for name in todo:
         label, fn = RANKERS[name]
@@ -155,6 +163,10 @@ def main():
                   f"({r['wall_min']:.1f} min, B={r['n_replicates']})")
             Path(a.out).parent.mkdir(parents=True, exist_ok=True)
             Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
+    # keep the table in RANKERS order regardless of --only / --append
+    out["rankers"] = {k: out["rankers"][k] for k in RANKERS
+                      if k in out["rankers"]}
+    Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
     print(f"\nwrote {a.out}")
 
 

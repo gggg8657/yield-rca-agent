@@ -255,6 +255,22 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
     # -- reporting -------------------------------------------------------
+    def ranking(self):
+        """The sensor ranking this loop reports, as original column indices.
+
+        Survivors of the verify-and-drop step first, ordered by impact, then
+        the dropped candidates so a top-k stays well defined when few survive.
+        This -- not ``ranked_``, which is written before anything is dropped --
+        is what a stability measurement should consume, or the VerifierAgent
+        drops out of the comparison without anyone noticing.
+        """
+        imp = {int(j): v for j, v in self.ranked_}
+        surv = sorted((int(j) for j in self.selected_original_),
+                      key=lambda j: -imp.get(j, 0.0))
+        seen = set(surv)
+        rest = [int(j) for j, _ in self.ranked_ if int(j) not in seen]
+        return np.asarray(surv + rest, dtype=int)
+
     def report(self, names=None):
         from .agents import ReporterAgent
 

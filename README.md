@@ -3,14 +3,15 @@
 **Multi-agent root-cause analysis for semiconductor yield loss, measured
 honestly on real fab data.** A plan → execute → verify loop routes
 role-specialized agents — attribution, correlation, verification, reporting —
-over 590 process sensors to say *which* signals are implicated in wafer fail,
-and how much that answer moves when you resample the wafers.
+over a fab's process sensors to say *which* signals are implicated in wafer
+fail, and how much that answer moves when you resample the wafers.
 
 The interesting part of this repo is not that it produces a root-cause list.
 It is that the list is scored against the obvious baseline under a protocol
-that cannot flatter it, on the **UCI SECOM** dataset — 1,567 wafers, 590
-sensors, 104 fails, missing values everywhere — and the result is largely
-negative. That result is reported here in full.
+that cannot flatter it, on
+<!-- BEGIN:intro_data -->
+<!-- END:intro_data -->
+And the result is largely negative. That result is reported here in full.
 
 ```mermaid
 flowchart LR
@@ -46,8 +47,8 @@ stated before any of them:
 | ground-truth root causes | **yes, by construction** | **none exist** |
 | what can be claimed | held-out AUC, top-5 stability, **and recovery of the planted causes** | held-out AUC and top-5 stability, **and nothing about causes** |
 
-SECOM ships a pass/fail label and 590 anonymous sensor traces. It does not ship
-an answer key, and no amount of attribution machinery creates one. So
+SECOM ships a pass/fail label and a wall of anonymous sensor traces. It does
+not ship an answer key, and no amount of attribution machinery creates one. So
 "n/5 causal sensors recovered" is a claim this repo makes **only** on synthetic
 data, and it is never carried over. A ranked SECOM suspect list is a
 *hypothesis for an engineer to go test on the tool*, not a recovered cause.
@@ -78,11 +79,12 @@ Every such decision here is a `fit` on the training fold:
   the fold. Left in, one physical signal's importance is split across several
   identical names, which corrupts any top-k stability measurement before it
   starts.
-- **Near-duplicates.** The harder case, and the common one here: sensors
-  correlated above |r| = 0.99 without being identical. `CorrelatorAgent` groups
-  them and reports one representative per group, and the stability KPI is
-  reported both per sensor and per group so the effect of that choice is
-  visible rather than baked in.
+- **Near-duplicates.** The harder case, and the common one here: sensors that
+  are near-identical without being identical. `CorrelatorAgent` groups them at
+  its configured `corr_thresh` and reports one representative per group; the
+  stability KPI is then reported both per sensor and per correlation group, at
+  the threshold named in that section, so the effect of the choice is visible
+  rather than baked in. Counts at each threshold are in the dataset table.
 
 The count of what each rule removes is in the dataset table above, measured by
 `scripts/prepare_data.py`.
@@ -90,11 +92,22 @@ The count of what each rule removes is in the dataset table above, measured by
 <!-- BEGIN:secom_auc -->
 <!-- END:secom_auc -->
 
+![SECOM AUC by arm, with 95% confidence intervals](assets/fig_secom_auc.png)
+
+<!-- BEGIN:rolling -->
+<!-- END:rolling -->
+
+![shuffled CV versus a chronological split, per arm](assets/fig_protocol.png)
+
 <!-- BEGIN:sweep -->
 <!-- END:sweep -->
 
+![AUC against the number of sensors the loop keeps](assets/fig_sparsity.png)
+
 <!-- BEGIN:stability -->
 <!-- END:stability -->
+
+![top-5 stability by ranker, under both perturbation schemes](assets/fig_stability.png)
 
 <!-- BEGIN:synthetic -->
 <!-- END:synthetic -->
@@ -196,24 +209,16 @@ yieldrca/
   model.py        numpy logistic regression + tie-correct rank AUC
   pipeline.py     run_rca — the numpy-only orchestrator
 scripts/          one script per experiment, each writing a JSON to runs/
+                  report.py regenerates RESULTS.md and the README's blocks
+                  make_figures.py regenerates assets/*.png
 runs/             the JSONs every number in the docs is generated from
+assets/           the figures, all drawn from runs/
 tests/            test_smoke.py (numpy only) · test_real.py (sklearn path)
 ```
 
 ## Limits
 
-- **No causal ground truth on SECOM**, so nothing here validates the *causal*
-  half of "root-cause analysis" on real data. The synthetic benchmark is a
-  proxy: its planted structure is additive-logistic, which is kinder than a
-  fab.
-- **104 positives.** That is the binding constraint on both KPIs, and no
-  modelling choice in this repo escapes it. Fixing the stability number needs
-  more failed wafers, not a better ranker.
-- **Sensors are anonymous.** `sensor_059` cannot be mapped to a tool or a
-  process step, so a domain expert cannot sanity-check a suspect list — which
-  is exactly the check that would matter most.
-- **Permutation importance is not a causal effect.** It measures what a fitted
-  model leans on. Two near-identical sensors split it; a genuine driver the
-  screen missed never gets scored at all.
+<!-- BEGIN:limits -->
+<!-- END:limits -->
 
 MIT licensed.

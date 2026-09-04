@@ -28,16 +28,25 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 from arms import AGENT_CFG, INNER, SEED, main_arms
 from yieldrca.data import load_secom
-from yieldrca.evaluate import chronological_split, repeated_cv, summarize
+from yieldrca.evaluate import (
+    chronological_split,
+    mean_ci,
+    repeated_cv,
+    rolling_origin_splits,
+    summarize,
+)
 
 
-def _chrono_one(arm, X, y, tr, te):
+def _fit_score(arm, X, y, tr, te, **extra):
     est = clone(arm.factory()) if callable(arm.factory) else clone(arm.factory)
     est.fit(X[tr], y[tr])
     s = est.predict_proba(X[te])
     s = s[:, 1] if np.ndim(s) == 2 else s
     rec = {"arm": arm.name, "auc": float(roc_auc_score(y[te], s)),
-           "ap": float(average_precision_score(y[te], s))}
+           "ap": float(average_precision_score(y[te], s)),
+           "n_train": int(len(tr)), "n_test": int(len(te)),
+           "n_fail_train": int(y[tr].sum()), "n_fail_test": int(y[te].sum()),
+           **extra}
     if arm.extras is not None:
         rec.update(arm.extras(est))
     return rec
@@ -48,6 +57,8 @@ def main():
     ap.add_argument("--splits", type=int, default=5)
     ap.add_argument("--repeats", type=int, default=5)
     ap.add_argument("--jobs", type=int, default=16)
+    ap.add_argument("--blocks", type=int, default=5,
+                    help="contiguous time blocks for the rolling-origin protocol")
     ap.add_argument("--root", default="data")
     ap.add_argument("--out", default="runs/secom_eval.json")
     a = ap.parse_args()
@@ -63,8 +74,27 @@ def main():
     tr, te = chronological_split(t, 0.7)
     t1 = time.time()
     chrono = Parallel(n_jobs=min(a.jobs, len(arms)))(
-        delayed(_chrono_one)(arm, X, y, tr, te) for arm in arms)
+        delayed(_fit_score)(arm, X, y, tr, te) for arm in arms)
     print(f"[chrono] {len(chrono)} fits in {(time.time()-t1)/60:.1f} min")
+
+    roll = rolling_origin_splits(t, a.blocks)
+    t2 = time.time()
+    roll_recs = Parallel(n_jobs=a.jobs)(
+        delayed(_fit_score)(arm, X, y, rtr, rte, origin=k)
+        for arm in arms for k, (rtr, rte) in enumerate(roll))
+    roll_recs = list(roll_recs)
+    print(f"[rolling] {len(roll_recs)} fits in {(time.time()-t2)/60:.1f} min")
+    rolling = {}
+    for arm in arms:
+        rs = [r for r in roll_recs if r["arm"] == arm.name]
+        rs.sort(key=lambda r: r["origin"])
+        rolling[arm.name] = {
+            "per_origin": [{"origin": r["origin"], "auc": r["auc"],
+                            "ap": r["ap"], "n_train": r["n_train"],
+                            "n_test": r["n_test"],
+                            "n_fail_test": r["n_fail_test"]} for r in rs],
+            "summary": mean_ci([r["auc"] for r in rs]),
+        }
 
     out = {
         "protocol": {
@@ -83,6 +113,11 @@ def main():
                 "n_train": int(len(tr)), "n_test": int(len(te)),
                 "n_fail_train": int(y[tr].sum()), "n_fail_test": int(y[te].sum()),
             },
+            "rolling_origin": {
+                "rule": f"{a.blocks} contiguous time blocks; train on blocks "
+                        f"0..k, test on block k+1, for k = 0..{a.blocks - 2}",
+                "n_origins": len(roll),
+            },
             "agent_cfg": AGENT_CFG,
         },
         "environment": {
@@ -97,6 +132,7 @@ def main():
         "auc": summarize(recs, "auc"),
         "ap": summarize(recs, "ap"),
         "chronological": {r["arm"]: r for r in chrono},
+        "rolling_origin": rolling,
     }
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
@@ -107,6 +143,10 @@ def main():
         print(f"{name:<20} {v['mean']:.3f}  {ci:>16}   "
               f"{out['ap']['per_arm'][name]['mean']:.3f}   "
               f"{out['chronological'][name]['auc']:.3f}")
+    print("\nrolling-origin AUC (train on the past, test on the next block):")
+    for name, v in out["rolling_origin"].items():
+        per = " ".join(f"{r['auc']:.3f}" for r in v["per_origin"])
+        print(f"  {name:<20} mean {v['summary']['mean']:.3f}   [{per}]")
     print("\npaired deltas vs rf_all (best baseline):")
     for k, d in out["auc"]["paired"].items():
         if k.endswith("__vs__rf_all"):
