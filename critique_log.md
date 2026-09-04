@@ -443,3 +443,76 @@ identical held-out τ calibration from `scripts/abstain.py`.
 structure, output `runs/null_fdr_rankers.json`. Cheap — a univariate screen is
 474 rank-AUCs rather than a permutation-importance pass, so this is minutes
 rather than the 31.5 min the agent arm took.
+
+---
+
+## Turn 5 (2026-09-04) — H2 verdict: split, and the split matters
+
+`scripts/null_fdr_rankers.py`, 720 replicates (3 rankers × [200 permuted + 40
+real]), 10.5 min → `runs/null_fdr_rankers.json`. Every arm matched to the agent
+loop's own `n_boot = 12` and `select_k = 40` from `AGENT_CFG`, identical
+max-over-sensors statistic, identical split-half held-out calibration, cleaning
+fitted inside each resample.
+
+| arm | P(real>null) | τ(0.05) | no-cause worlds kept silent | ceiling | suspects | abstains |
+|---|---|---|---|---|---|---|
+| `univariate` | **0.943** | 1.000 | 88.5% | 88.5% | 4.10 | 0% |
+| `rf_impurity` | 0.920 | 1.000 | 84.0% | 84.0% | 2.67 | 0% |
+| **agent (full loop)** | 0.873 | 0.909 | **91.6%** | **98.5%** | 0.60 | 51% |
+| `logreg_coef` | 0.785 | 1.000 | 57.0% | 57.0% | 2.92 | 0% |
+
+**H2 was confirmed on the clause I wrote and refuted on the thing that matters.**
+
+* *Confirmed:* "P(real max > null max) will be no higher for the agent loop than
+  for a plain univariate ranker" — 0.873 vs 0.943. The loop is a worse signal
+  detector, a third time, consistent with the AUC and stability tables.
+* *Refuted:* "the null-calibrated threshold will not buy the agent loop a longer
+  honest report." I framed this as though a longer report were the only prize.
+  It is not. The plain rankers' support **saturates at 1.000** — on real labels
+  their best sensor is in the top 40 of all 12 bootstraps, and on 11.5%
+  (`univariate`) to 43% (`logreg_coef`) of *permuted* replicates too. No τ ≤ 1
+  excludes those, so their error control is **capped**: 88.5% / 84.0% / 57.0%
+  is the most any threshold could ever deliver. The agent loop's noisier
+  statistic has headroom to 98.5% and lands at 91.6%, the only arm near the 95%
+  target.
+
+So the univariate ranker reports 4.10 suspects at 88.5% control and the agent
+loop reports 0.60 at 91.6%. Those are not the same product, and picking between
+them is not a modelling question.
+
+### The uncomfortable part, stated as narrowly as it holds
+
+**This is the first axis in this repository on which the agent architecture wins
+anything** — and the mechanism is not flattering. It wins because its estimator
+is noisy enough to be thresholded. A statistic pinned at its ceiling cannot
+express uncertainty; permutation importance over an inner split with ~25
+positives is variable enough that its bootstrap support spreads out, and a
+spread-out statistic is calibratable.
+
+That is a property of the *operating point*, not of the architecture, which is
+exactly why the claim must not be inflated. Which leads to:
+
+> **H3.** The agent loop's error-control advantage is an artifact of the
+> comparison's operating point, not of the plan/verify architecture. A plain
+> univariate ranker with more bootstrap replicates and a narrower selection
+> depth — so its support stops saturating — will match or beat the loop's 91.6%
+> control *and* still report more suspects.
+
+**What distinguishes H3 from the alternative.** The alternative is that
+permutation-importance-plus-verification produces a genuinely better-shaped
+uncertainty estimate that no reparameterisation of a univariate ranker
+reproduces. H3 predicts a univariate variant reaching ≥91.6% control with
+`real_reported_mean` above 0.60; the alternative predicts univariate's control
+stays capped below the loop's however `n_boot` and `select_k` are set, because
+what saturates is the ranker's *agreement with itself*, not the coarseness of
+the grid. Both are one table from the same protocol.
+
+If H3 holds, the loop has no measured advantage on any axis in this repo and the
+README must say exactly that. If it fails, the loop has one real advantage and
+it belongs in the abstract. Either way the answer is a run, and refusing to
+guess it is the point — the temptation here was to keep the flattering reading
+of the split verdict, since it is the only good news the architecture has
+produced all weekend.
+
+**Run:** same script, `--variants`, output shares
+`runs/null_fdr_rankers.json`.

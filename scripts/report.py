@@ -1348,6 +1348,146 @@ def sec_abstain(ab):
     return body
 
 
+def sec_ranker_fdr(rk):
+    """Does the loop's verification machinery calibrate better than a plain ranker?
+
+    Two columns decide it and they disagree, so both are printed: how well a
+    statistic *separates* a world with causes from one without, and how much
+    error control it can actually be thresholded to. A statistic that saturates
+    on real data separates beautifully and cannot be calibrated.
+    """
+    if not rk:
+        return []
+    per = rk["per_ranker"]
+    pr = rk["protocol"]
+    agent_key = next((k for k in per if k.startswith("agent")), None)
+    rows = []
+    for k in sorted(per, key=lambda k: -per[k]["prob_real_max_exceeds_null_max"]):
+        v = per[k]
+        h = v["heldout_alpha_0.05"]
+        rows.append([
+            f"**{k}**" if k.startswith("agent") else f"`{k}`",
+            f"{v['prob_real_max_exceeds_null_max']:.3f}",
+            f"{h['tau_mean']:.3f}",
+            f"{pct(h['null_abstention_heldout'])}",
+            f"{pct(h['max_attainable_null_abstention'])}",
+            f"{h['real_reported_mean']:.2f}",
+            pct(h["real_abstention"], 0),
+        ])
+    body = [
+        "## Would a plain ranker have calibrated better?", "",
+        f"The section above shows the loop's bootstrap support *is* informative "
+        f"about whether the labels were real, which is what makes a calibrated "
+        f"threshold work at all. So: {pr['question']} "
+        f"Comparing raw false-discovery rates would settle nothing -- "
+        f"{pr['why_not_fdr']}.", "",
+        f"**Matched by construction:** {pr['matched']}. Cleaning is fitted "
+        f"inside each resample, and the held-out calibration is the same "
+        f"split-half procedure `scripts/abstain.py` uses. From "
+        f"`scripts/null_fdr_rankers.py` into `runs/null_fdr_rankers.json`; the "
+        f"agent row is recomputed from `{pr['agent_arm_source']}` by the same "
+        f"code path, so no arm gets a different protocol.", "",
+        table(rows, ["ranker", "P(real > null)", "tau (0.05)",
+                     "no-cause worlds kept silent", "ceiling on that",
+                     "suspects reported", "reports nothing"]), "",
+        "The last two columns are the deliverable; the middle two are why the "
+        "obvious reading of the first one is wrong.", "",
+    ]
+    if not agent_key:
+        return body
+    ag = per[agent_key]
+    ag_h = ag["heldout_alpha_0.05"]
+    plain = {k: v for k, v in per.items() if not k.startswith("agent")}
+    if not plain:
+        return body
+    bs_k = max(plain, key=lambda k: plain[k]["prob_real_max_exceeds_null_max"])
+    bs = plain[bs_k]
+    bc_k = max(plain, key=lambda k: plain[k]["heldout_alpha_0.05"]["null_abstention_heldout"])
+    bc = plain[bc_k]["heldout_alpha_0.05"]
+    sep_gap = bs["prob_real_max_exceeds_null_max"] - ag["prob_real_max_exceeds_null_max"]
+    ctl_gap = bc["null_abstention_heldout"] - ag_h["null_abstention_heldout"]
+
+    if sep_gap > 0.02:
+        body += [
+            f"**On separation the plain rankers win.** `{bs_k}` distinguishes "
+            f"the two worlds at {bs['prob_real_max_exceeds_null_max']:.3f} "
+            f"against the full loop's "
+            f"{ag['prob_real_max_exceeds_null_max']:.3f}. Taken alone that "
+            f"says the whole plan/attribute/verify apparatus is a worse "
+            f"signal detector than ranking each sensor on its own -- the same "
+            f"verdict the AUC and stability tables reach, from a third "
+            f"direction.", "",
+        ]
+    elif sep_gap < -0.02:
+        body += [
+            f"**On separation the agent loop wins**, at "
+            f"{ag['prob_real_max_exceeds_null_max']:.3f} against "
+            f"`{bs_k}`'s {bs['prob_real_max_exceeds_null_max']:.3f}.", "",
+        ]
+    else:
+        body += [
+            f"**Separation is a tie** ({ag['prob_real_max_exceeds_null_max']:.3f} "
+            f"for the loop, {bs['prob_real_max_exceeds_null_max']:.3f} for "
+            f"`{bs_k}`).", "",
+        ]
+
+    if ctl_gap < -0.02:
+        body += [
+            f"**But separation is not the property you can ship, and on the "
+            f"one that is, the ordering reverses.** A plain ranker's support "
+            f"saturates: on real labels its best sensor sits in the top slice "
+            f"of every bootstrap replicate, so the statistic pins at 1.000 -- "
+            f"and it does that on "
+            f"{pct(1 - plain[bc_k]['heldout_alpha_0.05']['max_attainable_null_abstention'])} "
+            f"of *permuted-label* replicates too. No threshold at or below "
+            f"1.000 can exclude those, so `{bc_k}` cannot be calibrated past "
+            f"{pct(bc['max_attainable_null_abstention'])} error control no "
+            f"matter what alpha is asked for, and lands at "
+            f"{pct(bc['null_abstention_heldout'])} against the 95% target. The "
+            f"agent loop's noisier statistic has headroom: it reaches "
+            f"{pct(ag_h['null_abstention_heldout'])}, the only arm here that "
+            f"comes near nominal.", "",
+            f"**So the honest verdict is split, and the split is the "
+            f"finding.** If the question is *is there signal in this dataset at "
+            f"all*, a univariate ranker answers it better and cheaper. If the "
+            f"question is *give me a suspect list with a stated "
+            f"false-discovery guarantee*, only the agent loop's statistic can "
+            f"carry a guarantee -- and the price is a report of "
+            f"{ag_h['real_reported_mean']:.2f} suspects, empty "
+            f"{pct(ag_h['real_abstention'])} of the time, against `{bc_k}`'s "
+            f"{bc['real_reported_mean']:.2f} at weaker control. This is the "
+            f"first axis in this repository on which the verification "
+            f"machinery earns anything, and it earns it for a reason that has "
+            f"nothing to do with finding better sensors: its estimator is "
+            f"noisy enough to be thresholdable.", "",
+            "That is a genuinely uncomfortable argument in the loop's favour "
+            "and it should be read as narrowly as it is stated. It is not "
+            "evidence that the loop's suspects are better. It says that a "
+            "saturating statistic cannot express uncertainty, and the loop's "
+            "does -- which a coarser but bounded alternative (a univariate "
+            "ranker with more bootstrap replicates and a smaller selection "
+            "depth, so its support stops pinning at 1.0) would very likely "
+            "also achieve. That ablation is not run, and until it is, the "
+            "advantage claimed here is over *these* rankers at *this* "
+            "operating point, not over simplicity in general.", "",
+        ]
+    elif ctl_gap > 0.02:
+        body += [
+            f"**And it also controls error better**, reaching "
+            f"{pct(bc['null_abstention_heldout'])} against the loop's "
+            f"{pct(ag_h['null_abstention_heldout'])} at a 95% target, so the "
+            f"loop has no measured advantage on this axis either.", "",
+        ]
+    else:
+        body += [
+            f"**Error control is comparable too**: "
+            f"{pct(bc['null_abstention_heldout'])} for `{bc_k}` against "
+            f"{pct(ag_h['null_abstention_heldout'])} for the loop, both "
+            f"against a 95% target.", "",
+        ]
+    return body
+
+
 def sec_invariance(iv):
     """Whether the reported suspects are associational or something stronger."""
     if not iv:
@@ -1599,6 +1739,7 @@ def build(runs: Path):
     nf = read_json(runs / "null_fdr.json")
     ab = read_json(runs / "abstain.json")
     iv = read_json(runs / "invariance.json")
+    rk = read_json(runs / "null_fdr_rankers.json")
     L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
@@ -1610,6 +1751,7 @@ def build(runs: Path):
     L += sec_stability(st, prof)
     L += sec_null_fdr(nf)
     L += sec_abstain(ab)
+    L += sec_ranker_fdr(rk)
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
     L += sec_limits(prof, st)
@@ -1665,6 +1807,7 @@ README_BLOCKS = {
         sec_rolling_sweep(d["rs"], d["ev"])[2:]).strip(),
     "null_fdr": lambda d: "\n".join(
         sec_null_fdr(d["nf"])[2:] + sec_abstain(d["ab"])).strip(),
+    "ranker_fdr": lambda d: "\n".join(sec_ranker_fdr(d["rk"])[2:]).strip(),
     "invariance": lambda d: "\n".join(sec_invariance(d["iv"])[2:]).strip(),
 }
 
@@ -1681,6 +1824,7 @@ def inject(readme: str, runs: Path) -> str:
         "nf": read_json(runs / "null_fdr.json"),
         "ab": read_json(runs / "abstain.json"),
         "iv": read_json(runs / "invariance.json"),
+        "rk": read_json(runs / "null_fdr_rankers.json"),
     }
     for key, fn in README_BLOCKS.items():
         pat = re.compile(

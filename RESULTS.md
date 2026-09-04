@@ -258,6 +258,29 @@ At 0.014 against a floor of 0.011, the null's suspects are freshly invented on e
 
 **The 0.548 is not comparable to this repo's top-5 stability KPI and must not be read as one.** These replicates perturb only the loop's internal random seed on the full wafer set; the KPI perturbs the *wafers*, by bootstrap resampling, which is a far harder test and is why it reads much lower in the stability section. The number is here only as the upper reference for the null column beside it.
 
+## Would a plain ranker have calibrated better?
+
+The section above shows the loop's bootstrap support *is* informative about whether the labels were real, which is what makes a calibrated threshold work at all. So: does the agent loop's bootstrap support separate a world with causes from one without any better than a plain ranker's does? Comparing raw false-discovery rates would settle nothing -- any procedure that always emits a top-k has FDR 1.0 under this null, so raw FDR cannot distinguish the arms; separation decides how much of a report survives calibration, so separation is compared.
+
+**Matched by construction:** every arm uses the agent loop's own n_boot=12 and select_k=40 from AGENT_CFG, and the identical max-over-sensors statistic, so a difference in separation is a difference in the ranker. Cleaning is fitted inside each resample, and the held-out calibration is the same split-half procedure `scripts/abstain.py` uses. From `scripts/null_fdr_rankers.py` into `runs/null_fdr_rankers.json`; the agent row is recomputed from `runs/null_fdr.json` by the same code path, so no arm gets a different protocol.
+
+| ranker | P(real > null) | tau (0.05) | no-cause worlds kept silent | ceiling on that | suspects reported | reports nothing |
+|---|---|---|---|---|---|---|
+| `univariate` | 0.943 | 1.000 | 88.5% | 88.5% | 4.10 | 0% |
+| `rf_impurity` | 0.920 | 1.000 | 84.0% | 84.0% | 2.67 | 0% |
+| **agent (full loop)** | 0.873 | 0.909 | 91.6% | 98.5% | 0.60 | 51% |
+| `logreg_coef` | 0.785 | 1.000 | 57.0% | 57.0% | 2.92 | 0% |
+
+The last two columns are the deliverable; the middle two are why the obvious reading of the first one is wrong.
+
+**On separation the plain rankers win.** `univariate` distinguishes the two worlds at 0.943 against the full loop's 0.873. Taken alone that says the whole plan/attribute/verify apparatus is a worse signal detector than ranking each sensor on its own -- the same verdict the AUC and stability tables reach, from a third direction.
+
+**But separation is not the property you can ship, and on the one that is, the ordering reverses.** A plain ranker's support saturates: on real labels its best sensor sits in the top slice of every bootstrap replicate, so the statistic pins at 1.000 -- and it does that on 11.5% of *permuted-label* replicates too. No threshold at or below 1.000 can exclude those, so `univariate` cannot be calibrated past 88.5% error control no matter what alpha is asked for, and lands at 88.5% against the 95% target. The agent loop's noisier statistic has headroom: it reaches 91.6%, the only arm here that comes near nominal.
+
+**So the honest verdict is split, and the split is the finding.** If the question is *is there signal in this dataset at all*, a univariate ranker answers it better and cheaper. If the question is *give me a suspect list with a stated false-discovery guarantee*, only the agent loop's statistic can carry a guarantee -- and the price is a report of 0.60 suspects, empty 51.4% of the time, against `univariate`'s 4.10 at weaker control. This is the first axis in this repository on which the verification machinery earns anything, and it earns it for a reason that has nothing to do with finding better sensors: its estimator is noisy enough to be thresholdable.
+
+That is a genuinely uncomfortable argument in the loop's favour and it should be read as narrowly as it is stated. It is not evidence that the loop's suspects are better. It says that a saturating statistic cannot express uncertainty, and the loop's does -- which a coarser but bounded alternative (a univariate ranker with more bootstrap replicates and a smaller selection depth, so its support stops pinning at 1.0) would very likely also achieve. That ablation is not run, and until it is, the advantage claimed here is over *these* rankers at *this* operating point, not over simplicity in general.
+
 ## Are the suspects causal, or only associated?
 
 Permutation importance is not a causal quantity: it measures how much a model leans on a column. The weakest claim with an actual identification argument behind it is invariance -- if a sensor really drives failure, its relationship with failure should survive a change of production period, and `runs/drift.json` already shows these periods are genuinely different environments. This is the marginal screen from Invariant Causal Prediction (Peters, Buhlmann & Meinshausen, JRSS-B 2016): a **necessary** condition for a stable cause, not a sufficient one. From `scripts/invariance.py`, written to `runs/invariance.json`.

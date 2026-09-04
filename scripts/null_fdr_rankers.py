@@ -55,6 +55,19 @@ from yieldrca.preprocess import SensorCleaner
 
 RANKERS = ("univariate", "logreg_coef", "rf_impurity")
 
+# H3: is the agent loop's error-control advantage a property of the
+# architecture, or only of the operating point it was compared at? A plain
+# ranker's support pins at 1.000 because "top 40 of 474, in all 12 resamples" is
+# easy. Narrow the selection depth and add resamples and the statistic has to
+# spread out -- if control then matches the loop's, the advantage was the grid.
+# Named by what is varied so no row in the output table is ambiguous.
+VARIANTS = (
+    ("univariate", 12, 5),
+    ("univariate", 40, 5),
+    ("univariate", 40, 10),
+    ("univariate", 100, 5),
+)
+
 
 def _rank(kind, X, y, seed):
     """Ordered sensor indices for one resample, cleaning fitted in-sample."""
@@ -71,8 +84,9 @@ def _rank(kind, X, y, seed):
     return np.argsort(w)[::-1]
 
 
-def _one(X, y, permuted, rep, kind, n_boot, select_k, top_k):
+def _one(X, y, permuted, rep, kind, n_boot, select_k, top_k, arm=None):
     """One replicate: bootstrap selection frequencies, then the max statistic."""
+    arm = arm or kind
     rng = np.random.default_rng(10_000 + rep)
     yy = rng.permutation(y) if permuted else y
 
@@ -96,10 +110,46 @@ def _one(X, y, permuted, rep, kind, n_boot, select_k, top_k):
     top = [int(keep[j]) for j in full[:top_k]]
     return {
         "rep": rep, "permuted": bool(permuted), "ranker": kind,
+        "arm": arm, "n_boot": int(n_boot), "select_k": int(select_k),
         "max_stability": float(supp.max()),
         "n_at_or_above_half": int((supp >= 0.5).sum()),
         "stability_values": sorted(supp[supp > 0].tolist(), reverse=True)[:60],
         "top5": top,
+    }
+
+
+def _heldout(null_max, real_sets, alpha, splits, rng):
+    """Split-half calibrated rates, matching `scripts/abstain.py` exactly.
+
+    tau is fitted on one half of the null replicates and every rate read off
+    the other, both directions, averaged over random partitions -- because
+    fitting tau and scoring abstention on the same replicates returns
+    ``1 - alpha`` by construction and measures nothing.
+    """
+    nm = np.asarray(null_max, dtype=float)
+    idx = np.arange(len(nm))
+    taus, n_ab, r_ab, r_n = [], [], [], []
+    for _ in range(splits):
+        perm = rng.permutation(idx)
+        halves = (perm[: len(perm) // 2], perm[len(perm) // 2:])
+        for cal, ev in (halves, halves[::-1]):
+            t = float(np.quantile(nm[cal], 1.0 - alpha))
+            taus.append(t)
+            n_ab.append(float(np.mean(nm[ev] < t)))
+            kept = [int(sum(v >= t for v in vals)) for vals in real_sets]
+            r_ab.append(float(np.mean([k == 0 for k in kept])) if kept else float("nan"))
+            r_n.append(float(np.mean(kept)) if kept else float("nan"))
+    return {
+        "alpha": alpha,
+        "tau_mean": float(np.mean(taus)),
+        # the decisive column: can this statistic even be thresholded to the
+        # target level, or does it saturate?
+        "null_abstention_heldout": float(np.mean(n_ab)),
+        "null_abstention_target": 1.0 - alpha,
+        "real_abstention": float(np.mean(r_ab)),
+        "real_reported_mean": float(np.mean(r_n)),
+        "saturated_null_fraction": float(np.mean(nm >= 1.0)),
+        "max_attainable_null_abstention": float(np.mean(nm < 1.0)),
     }
 
 
@@ -121,6 +171,12 @@ def main():
     ap.add_argument("--root", default="data")
     ap.add_argument("--agent", default="runs/null_fdr.json",
                     help="the agent-loop run this is compared against")
+    ap.add_argument("--splits", type=int, default=400,
+                    help="random half/half partitions for held-out calibration")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--variants", action="store_true",
+                    help="also run the H3 arms: a plain ranker at operating "
+                         "points where its support cannot saturate")
     ap.add_argument("--out", default="runs/null_fdr_rankers.json")
     a = ap.parse_args()
 
@@ -128,17 +184,21 @@ def main():
     n_boot = AGENT_CFG["n_boot"]
     select_k = AGENT_CFG["select_k"]
     top_k = AGENT_CFG["top_k"]
-    jobs = [(k, p, r) for k in RANKERS
+    specs = [(k, k, n_boot, select_k) for k in RANKERS]
+    if a.variants:
+        specs += [(f"{k} (n_boot={nb}, select_k={sk})", k, nb, sk)
+                  for k, nb, sk in VARIANTS]
+    jobs = [(arm, k, nb, sk, p, r) for arm, k, nb, sk in specs
             for p, n in ((True, a.null), (False, a.real))
             for r in range(n)]
-    print(f"[rankers] {len(jobs)} replicates over {len(RANKERS)} rankers, "
-          f"n_boot={n_boot} select_k={select_k} (from AGENT_CFG), "
+    print(f"[rankers] {len(jobs)} replicates over {len(specs)} arms "
+          f"(base at n_boot={n_boot} select_k={select_k} from AGENT_CFG), "
           f"{a.jobs} workers", flush=True)
 
     t0 = time.time()
     recs = Parallel(n_jobs=a.jobs, verbose=5)(
-        delayed(_one)(X, y, p, r, k, n_boot, select_k, top_k)
-        for k, p, r in jobs)
+        delayed(_one)(X, y, p, r, k, nb, sk, top_k, arm)
+        for arm, k, nb, sk, p, r in jobs)
     wall = time.time() - t0
     print(f"[rankers] done in {wall/60:.1f} min", flush=True)
 
@@ -148,53 +208,48 @@ def main():
         agent = json.loads(ap_.read_text())
 
     per = {}
-    for kind in RANKERS:
-        nl = [r for r in recs if r["ranker"] == kind and r["permuted"]]
-        rl = [r for r in recs if r["ranker"] == kind and not r["permuted"]]
+    for arm, kind, nb, sk in specs:
+        nl = [r for r in recs if r["arm"] == arm and r["permuted"]]
+        rl = [r for r in recs if r["arm"] == arm and not r["permuted"]]
         nm = [r["max_stability"] for r in nl]
         rm = [r["max_stability"] for r in rl]
         u, pv = mannwhitneyu(rm, nm, alternative="greater") if (nm and rm) \
             else (float("nan"), float("nan"))
         sep = float(np.mean([[1.0 if x > z else 0.5 if x == z else 0.0
                               for z in nm] for x in rm])) if (nm and rm) else float("nan")
-        tau = float(np.quantile(nm, 0.95)) if nm else float("nan")
-        kept = [int(sum(v >= tau for v in r["stability_values"])) for r in rl]
-        per[kind] = {
+        rng = np.random.default_rng(a.seed)
+        ho = _heldout(nm, [r["stability_values"] for r in rl], 0.05,
+                      a.splits, rng) if (nm and rl) else {}
+        per[arm] = {
+            "ranker": kind, "n_boot": nb, "select_k": sk,
+            "is_variant": arm != kind,
             "null": _summ(nl), "real": _summ(rl),
             "prob_real_max_exceeds_null_max": sep,
             "mannwhitney_p": float(pv),
-            "tau_alpha_0.05": tau,
-            "real_reported_at_tau_mean": float(np.mean(kept)) if kept else float("nan"),
-            "real_abstention_at_tau": float(np.mean([k == 0 for k in kept]))
-            if kept else float("nan"),
+            "heldout_alpha_0.05": ho,
         }
 
     if agent:
-        nm = [r["max_stability"] for r in agent["records"] if r["permuted"]]
-        rm = [r["max_stability"] for r in agent["records"] if not r["permuted"]]
-        tau = float(np.quantile(nm, 0.95))
-        kept = [int(sum(v >= tau for v in r["stability_values"]))
-                for r in agent["records"] if not r["permuted"]]
+        nl = [r for r in agent["records"] if r["permuted"]]
+        rl = [r for r in agent["records"] if not r["permuted"]]
+        nm = [r["max_stability"] for r in nl]
+        rng = np.random.default_rng(a.seed)
         per["agent (full loop)"] = {
-            "null": {"n_replicates": len(nm),
-                     "max_stability_mean": float(np.mean(nm)),
-                     "max_stability_q05": float(np.quantile(nm, 0.05)),
-                     "max_stability_q95": float(np.quantile(nm, 0.95))},
-            "real": {"n_replicates": len(rm),
-                     "max_stability_mean": float(np.mean(rm)),
-                     "max_stability_q05": float(np.quantile(rm, 0.05)),
-                     "max_stability_q95": float(np.quantile(rm, 0.95))},
+            "ranker": "agent", "n_boot": n_boot, "select_k": select_k,
+            "is_variant": False,
+            "null": _summ(nl), "real": _summ(rl),
             "prob_real_max_exceeds_null_max":
                 agent["separation"]["prob_real_max_exceeds_null_max"],
             "mannwhitney_p": agent["separation"]["p_real_greater"],
-            "tau_alpha_0.05": tau,
-            "real_reported_at_tau_mean": float(np.mean(kept)) if kept else float("nan"),
-            "real_abstention_at_tau": float(np.mean([k == 0 for k in kept]))
-            if kept else float("nan"),
+            "heldout_alpha_0.05": _heldout(
+                nm, [r["stability_values"] for r in rl], 0.05, a.splits, rng),
             "source": a.agent,
         }
 
     best = max(per, key=lambda k: per[k]["prob_real_max_exceeds_null_max"])
+    best_control = max(
+        per, key=lambda k: per[k]["heldout_alpha_0.05"].get(
+            "null_abstention_heldout", float("-inf")))
     out = {
         "protocol": {
             "question": "does the agent loop's bootstrap support separate a "
@@ -202,8 +257,11 @@ def main():
                         "plain ranker's does?",
             "why_not_fdr": "any procedure that always emits a top-k has FDR 1.0 "
                            "under this null, so raw FDR cannot distinguish the "
-                           "arms; separation decides how much of a report "
-                           "survives calibration, so separation is compared",
+                           "arms. Two properties can: how well the statistic "
+                           "separates a world with causes from one without, "
+                           "and how much error control it can actually be "
+                           "thresholded to. They disagree here, so both are "
+                           "reported",
             "null": "labels permuted over all wafers, class balance preserved; "
                     "X untouched",
             "matched": f"every arm uses the agent loop's own n_boot={n_boot} "
@@ -220,23 +278,35 @@ def main():
                         "platform": platform.platform(),
                         "wall_min": wall / 60.0},
         "best_separating_arm": best,
+        "best_controlled_arm": best_control,
+        "note_on_saturation": "a support statistic that saturates at 1.0 on a "
+                              "share of *null* replicates cannot be thresholded "
+                              "to an arbitrary level: no tau <= 1 excludes "
+                              "those replicates, so max_attainable_null_"
+                              "abstention caps the error control that arm can "
+                              "ever offer, whatever its separation",
         "per_ranker": per,
         "records": recs,
     }
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
 
-    print(f"\n{'arm':<22}{'null max':>10}{'real max':>10}{'P(real>null)':>14}"
-          f"{'tau .05':>9}{'suspects':>10}{'abstains':>10}")
+    print(f"\n{'arm':<40}{'P(real>null)':>13}{'tau':>7}{'null ctrl':>11}"
+          f"{'ceiling':>9}{'suspects':>10}{'abstains':>10}")
     for kind, v in sorted(per.items(),
                           key=lambda kv: -kv[1]["prob_real_max_exceeds_null_max"]):
-        print(f"{kind:<22}{v['null']['max_stability_mean']:>10.3f}"
-              f"{v['real']['max_stability_mean']:>10.3f}"
-              f"{v['prob_real_max_exceeds_null_max']:>14.3f}"
-              f"{v['tau_alpha_0.05']:>9.3f}"
-              f"{v['real_reported_at_tau_mean']:>10.2f}"
-              f"{v['real_abstention_at_tau']:>10.0%}")
+        h = v["heldout_alpha_0.05"]
+        print(f"{kind:<40}{v['prob_real_max_exceeds_null_max']:>13.3f}"
+              f"{h['tau_mean']:>7.3f}{h['null_abstention_heldout']:>11.1%}"
+              f"{h['max_attainable_null_abstention']:>9.1%}"
+              f"{h['real_reported_mean']:>10.2f}"
+              f"{h['real_abstention']:>10.0%}")
+    print("\n  'null ctrl' = held-out share of no-cause worlds correctly kept "
+          "silent (target 95%)")
+    print("  'ceiling'   = the most any threshold could ever achieve, given "
+          "how often the statistic saturates")
     print(f"\nbest separating arm: {best}")
+    print(f"best error-controlled arm: {best_control}")
     print(f"wrote {a.out}")
 
 
