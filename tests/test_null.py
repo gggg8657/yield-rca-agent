@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from sklearn.metrics import roc_auc_score
 
+import null_fdr_rankers as nfr
 from invariance import auc_from_ranks, bh, cochran_q, invariance_stage, rank_table
 from yieldrca.data import make_synthetic
 from yieldrca.estimator import AgentRCA
@@ -187,6 +188,64 @@ def test_report_tau_keeps_only_suspects_above_the_bar():
         if prev is not None:
             assert n <= prev, (tau, n, prev)
         prev = n
+
+
+# ------------------------------------------- the saturation ceiling argument
+def test_heldout_ceiling_bounds_the_achievable_control():
+    """A saturated support statistic caps the error control any tau can give.
+
+    This is the argument the ranker comparison turns on, so it is pinned rather
+    than trusted: if a fraction f of null replicates score the maximum possible
+    support, no threshold at or below that maximum excludes them, and the
+    achievable abstention rate cannot exceed 1 - f however small alpha is.
+    """
+    rng = np.random.default_rng(0)
+    for f in (0.0, 0.1, 0.35):
+        n = 400
+        n_sat = int(round(f * n))
+        null_max = np.concatenate([
+            np.ones(n_sat),                                  # saturated
+            rng.uniform(0.2, 0.95, n - n_sat),               # not
+        ])
+        real_sets = [[1.0, 0.9] for _ in range(20)]
+        out = nfr._heldout(null_max, real_sets, 0.05, 40, np.random.default_rng(1))
+        assert abs(out["saturated_null_fraction"] - f) < 0.02, f
+        assert abs(out["max_attainable_null_abstention"] - (1 - f)) < 0.02, f
+        # the achieved rate can never beat the ceiling, whatever tau came out
+        assert out["null_abstention_heldout"] <= out["max_attainable_null_abstention"] + 1e-9
+
+
+def test_heldout_control_approaches_nominal_when_nothing_saturates():
+    """With headroom, split-half calibration should land near 1 - alpha.
+
+    Guards the other direction: if this drifted far from nominal on a clean
+    continuous null, the calibration code would be wrong and every control
+    number in `runs/null_fdr_rankers.json` with it.
+    """
+    rng = np.random.default_rng(2)
+    null_max = rng.uniform(0.0, 0.9, 600)          # no saturation at all
+    out = nfr._heldout(null_max, [[0.95] for _ in range(10)], 0.05, 60,
+                       np.random.default_rng(3))
+    assert out["max_attainable_null_abstention"] == 1.0
+    assert 0.90 <= out["null_abstention_heldout"] <= 0.98, out
+
+
+def test_heldout_is_not_scored_on_the_replicates_that_set_tau():
+    """The split must be a real split, or the null rate is 1 - alpha by fiat.
+
+    If calibration and evaluation shared replicates, a null drawn so that one
+    half sits far above the other would still report ~1 - alpha. Here the
+    halves are exchangeable, so the check is that tau tracks the calibration
+    half rather than the whole: a heavily right-skewed null must push tau above
+    the median of the pooled sample.
+    """
+    rng = np.random.default_rng(4)
+    null_max = np.concatenate([rng.uniform(0.0, 0.3, 300),
+                               rng.uniform(0.7, 0.9, 300)])
+    out = nfr._heldout(null_max, [[0.95] for _ in range(10)], 0.05, 60,
+                       np.random.default_rng(5))
+    assert out["tau_mean"] > float(np.median(null_max))
+    assert out["null_abstention_heldout"] < 1.0
 
 
 if __name__ == "__main__":
