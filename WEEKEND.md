@@ -6,7 +6,7 @@ every number below is regenerated into [`RESULTS.md`](RESULTS.md) by
 `scripts/report.py` from a JSON in `runs/`, and `scripts/report.py --check`
 fails CI if a document and a JSON disagree.*
 
-Last updated: Friday 2026-09-04, ~13:30.
+Last updated: Friday 2026-09-04, ~15:00.
 
 ---
 
@@ -140,6 +140,19 @@ replaces the earlier conclusion rather than quietly overwriting it.
 - **Blaming the never-empty fallback for the false discoveries.** Measured at
   0.0%. Rules out "delete four lines and it's fixed" — the threshold is the
   problem, so the fix has to be a calibrated bar.
+- **Describing a protocol the code did not implement.** An adversarial review
+  caught `null_fdr_rankers.py`'s docstring and the generated `RESULTS.md` both
+  claiming `SensorCleaner` is fitted inside each bootstrap resample. It is
+  fitted once per replicate, above the loop. The numbers do not move — the
+  cleaner is unsupervised, so a label permutation cannot change its output —
+  but the description was wrong and is now corrected in three places. Rules out
+  trusting a protocol string that no test reads.
+- **Treating `P(real > null)` as a pure signal-detection measure.** The same
+  review pointed out it is confounded with *repeatability*: "real" replicates
+  reuse one label vector and vary only bootstrap randomness, so a
+  near-deterministic univariate ranker is favoured over the loop's much wider
+  internal stochasticity. The error-control column does not share the confound,
+  so the conclusion holds — but separation is now labelled the weaker column.
 - **Concluding the loop was the only arm that could carry a false-discovery
   guarantee.** True at the matched operating point, false as a statement about
   the architecture, and I committed it before the follow-up run refuted it. Rules
@@ -238,7 +251,21 @@ is still open — it needs a call, not more measurement.
 
 | job | started | expect | check |
 |---|---|---|---|
-| `scripts/null_fdr.py --select-k 5` (H4: is depth what limits the loop's error control too?) | ~13:25 Fri | ~32 min, writes `runs/null_fdr_k5.json` | `tail -5 runs/null_fdr_k5.log` |
+| `scripts/null_fdr.py --select-k 5` (H4: is depth what limits the loop's error control too?) | ~13:25 Fri | ~33 min, writes `runs/null_fdr_k5.json` | `tail -5 runs/null_fdr_k5.log` |
+
+Queued behind it, in order:
+
+1. **H5** — `scripts/stability_secom.py --only agent_model --append`. Re-measures
+   the headline top-5 stability KPI with `attribution="model"` instead of
+   held-out permutation importance, one config field changed. Three separate
+   measurements now implicate that statistic; this tests whether it is what
+   limits stability, or whether the sample-size wall dominates as this repo
+   currently claims. ~80 min. Hypothesis and both competing predictions are in
+   `critique_log.md` Turn 8, written before the run.
+2. **Re-run `scripts/null_fdr_rankers.py --variants`** so its JSON's own
+   `leakage_control` field carries the corrected protocol text. The numbers are
+   unaffected; `RESULTS.md` already states the corrected version from a
+   verified literal. ~32 min, cosmetic.
 
 H4 asks *why* the loop loses, not whether — the univariate arm has already
 cleared it either way. If the loop's control climbs into the 93–94% band when
