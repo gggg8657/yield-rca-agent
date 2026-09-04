@@ -55,7 +55,7 @@ from arms import AGENT_CFG, SEED, agent
 from yieldrca.data import load_secom
 
 
-def _one(X, y, permuted: bool, rep: int, base: str):
+def _one(X, y, permuted: bool, rep: int, base: str, over=None):
     """One agent-loop fit; returns what it reported and how well supported it was.
 
     ``permuted`` shuffles the labels with a replicate-specific seed. The loop's
@@ -65,7 +65,7 @@ def _one(X, y, permuted: bool, rep: int, base: str):
     """
     rng = np.random.default_rng(10_000 + rep)
     yy = rng.permutation(y) if permuted else y
-    est = agent(base, random_state=SEED + rep).fit(X, yy)
+    est = agent(base, random_state=SEED + rep, **(over or {})).fit(X, yy)
 
     stab = {int(j): float(v) for j, v in est.stability_.items()}
     stab_top = {int(j): float(v) for j, v in est.stability_top_k_.items()}
@@ -75,6 +75,7 @@ def _one(X, y, permuted: bool, rep: int, base: str):
         "rep": rep,
         "permuted": bool(permuted),
         "base": base,
+        "overrides": dict(over or {}),
         "n_fail": int(yy.sum()),
         "n_reported": int(len(est.selected_)),
         "n_candidates": int(est.n_candidates_),
@@ -124,17 +125,27 @@ def main():
     ap.add_argument("--base", default="rf")
     ap.add_argument("--jobs", type=int, default=16)
     ap.add_argument("--root", default="data")
+    ap.add_argument("--select-k", type=int, default=None,
+                    help="override the loop's bootstrap selection depth. H4: "
+                         "the univariate arm's error control jumped when its "
+                         "depth narrowed, so this asks whether depth or the "
+                         "permutation-importance estimator is what limits the "
+                         "loop's.")
     ap.add_argument("--out", default="runs/null_fdr.json")
     a = ap.parse_args()
 
     X, y, names = load_secom(a.root)
+    over = {"select_k": a.select_k} if a.select_k is not None else {}
     jobs = [(True, r) for r in range(a.null)] + [(False, r) for r in range(a.real)]
+    if over:
+        print(f"[null_fdr] overriding {over} (baseline is "
+              f"select_k={AGENT_CFG['select_k']})", flush=True)
     print(f"[null_fdr] {len(jobs)} agent-loop fits "
           f"({a.null} permuted, {a.real} real), {a.jobs} workers", flush=True)
 
     t0 = time.time()
     recs = Parallel(n_jobs=a.jobs, verbose=5)(
-        delayed(_one)(X, y, perm, rep, a.base) for perm, rep in jobs)
+        delayed(_one)(X, y, perm, rep, a.base, over) for perm, rep in jobs)
     wall = time.time() - t0
     print(f"[null_fdr] done in {wall/60:.1f} min", flush=True)
 
@@ -183,10 +194,11 @@ def main():
             "fit_on": "all 1,567 wafers (this measures what the loop *reports*, "
                       "not what it predicts; no held-out scoring is involved)",
             "n_null": a.null, "n_real": a.real, "base": a.base,
+            "overrides": over,
             "threshold": "tau(alpha) = (1-alpha) quantile of the null "
                          "max_stability; Westfall-Young max-statistic control, "
                          "family-wise over the sensors screened per replicate",
-            "agent_cfg": AGENT_CFG,
+            "agent_cfg": {**AGENT_CFG, **over},
         },
         "environment": {
             "python": platform.python_version(),

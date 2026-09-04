@@ -26,14 +26,23 @@ what noise clears. The underlying statistic is nonetheless informative
 (P(real > null) = 0.873), so we derive a null-calibrated abstention rule with
 family-wise control and price it under held-out calibration: at alpha = 0.05 the
 honest report is 0.60 suspects and empty 51% of the time, against the 20.9 the
-pipeline prints. Third, we ask whether the surviving suspects support a causal
-reading via an invariance screen across production periods. Exactly one of 22
+pipeline prints. Third, we ask whether anything simpler would have
+calibrated as well, and find that it does the whole job better: a univariate
+ranker at a selection depth where its support does not saturate separates the
+two worlds at 1.000, reaches 94.3% error control against the loop's 91.6%, and
+reports 2.06 suspects against 0.60 -- with no permutation-importance pass, no
+correlation grouping and no verification loop. Fourth, we ask whether the
+surviving suspects support a causal reading via an invariance screen across
+production periods. Exactly one of 22
 associated sensors is rejected -- and it is the one the loop ranks first in
 25 of 25 folds -- while the remaining 21 are not invariant but untestable, which
 we establish by attaching the screen's power curve: at 104 failed wafers it
 cannot see a break smaller than roughly 0.15 AUC, and the sensors' entire signal
 is smaller than that. The pipeline's output is therefore associational and we
-say so. Finally we contrast all of this against a synthetic
+say so. Taken together the agent loop has no measured advantage over a
+univariate ranker on any axis we evaluate; it wins only on a synthetic generator
+where its premise -- that a few sensors dominate -- holds by construction, which
+localises the failure in the premise rather than the implementation. Finally we contrast all of this against a synthetic
 generator with known causes, where the same loop wins on both accuracy and
 stability -- locating the failure precisely in the premise that a few sensors
 dominate, rather than in the implementation.
@@ -80,9 +89,16 @@ Contributions:
    run the entire loop, count the causes it invents. (§4)
 2. **A null-calibrated abstention rule** derived from that null, giving the
    pipeline the ability -- which it structurally lacks -- to report nothing. (§5)
-3. **An invariance screen across production periods, reported with its power
+3. **A saturation diagnostic for calibrated selection.** Bootstrap-support
+   thresholds are widely used to filter unstable features; we show the statistic
+   can pin at its ceiling on a non-trivial share of *null* replicates, capping
+   the error control any threshold can deliver, and that this is a property of
+   the selection depth rather than of the ranker. Reporting the attainable
+   ceiling alongside the achieved rate is a one-line change that prevents the
+   conclusion we ourselves drew and had to retract. (§5.3)
+4. **An invariance screen across production periods, reported with its power
    curve**, so that a null result is interpretable rather than flattering. (§6)
-4. **A negative accuracy result against the obvious baseline**, and the
+5. **A negative accuracy result against the obvious baseline**, and the
    diagnosis that separates "the loop is badly implemented" from "the loop's
    premise does not hold on this data". (§3, §7)
 
@@ -258,6 +274,34 @@ causes" to "at most one or two, often none, and the reason why". Where alpha
 should sit is a business question about the cost of a wasted investigation
 against a missed cause, not a statistical one.
 
+### 5.3 Would anything simpler have calibrated as well?
+
+Comparing raw false-discovery rates across methods is uninformative: any
+procedure that always emits a top-k has FDR 1.0 under this null. Two properties
+do discriminate, and they can disagree -- how well the statistic *separates* a
+world with causes from one without, and how much error control it can be
+*thresholded* to. We compare the loop against univariate, logistic-coefficient
+and impurity rankers, every arm matched to the loop's own bootstrap count and
+selection depth and scored with the identical max statistic and the identical
+held-out calibration.
+
+At matched settings the plain rankers separate better (univariate 0.943 vs
+0.873) but their support **saturates**: their best sensor sits in the top slice
+of every resample, so the statistic pins at 1.000 on real labels and on 11.5% of
+permuted ones. No threshold at or below 1.000 excludes those, capping univariate
+at 88.5% control against the loop's 91.6%. Read alone, this says the loop's
+noisier estimator is the only one able to carry a guarantee -- a conclusion we
+drew, wrote up, and then refuted.
+
+Narrowing the selection depth removes the saturation entirely. At
+`select_k = 5`, univariate reaches a 100% ceiling, 94.3% achieved control,
+1.000 separation and 2.06 reported suspects against the loop's 0.60 and 51%
+abstention. **What saturated was the depth, not the ranker.** The methodological
+point generalises beyond this pipeline: any stability-selection procedure that
+thresholds a bounded support statistic should report the attainable ceiling next
+to the achieved rate, because a saturated statistic looks maximally confident
+and is minimally calibratable.
+
 ---
 
 ## 6. Are the suspects causal? A negative result with its power attached
@@ -372,13 +416,16 @@ too small to settle it.
 
 1. Single real dataset. The false-discovery methodology transfers; the numbers
    do not.
-2. The agents are deterministic tool users, not language models. This buys
+2. The ranker comparison scores *ranking statistics under bootstrap
+   resampling*, which is not everything the loop does -- correlation grouping
+   and the written report are unscored, and no protocol here could score them.
+3. The agents are deterministic tool users, not language models. This buys
    reproducibility and means the hallucination measured here is *structural*
    rather than generative -- an LLM narrator over the same tool outputs would
    add a second, unmeasured failure mode on top.
-3. The invariance screen is marginal, not full ICP, and underpowered at this
+4. The invariance screen is marginal, not full ICP, and underpowered at this
    sample size -- quantified rather than glossed (§6.3).
-4. 104 failures bounds everything. Several results here are "this dataset cannot
+5. 104 failures bounds everything. Several results here are "this dataset cannot
    settle it", which is honest but is not the same as settled.
 
 ---
@@ -389,6 +436,14 @@ Report a false-discovery rate under a null, or do not claim your agent drops bad
 suspects. It costs one permutation loop, it is the only version of the claim
 that can be wrong, and on the pipeline studied here it changes the conclusion
 from "verified suspects" to "a procedure that cannot abstain".
+
+Then compare against the simplest thing that could work, at *its* best operating
+point rather than at yours. We did not, for one revision, and concluded that the
+agent architecture uniquely supported a false-discovery guarantee. It did not;
+the baseline had been pinned at a selection depth that made its statistic
+degenerate. The finding survived only because every number in the write-up was
+generated from a run artefact by a script, so re-running turned a refuted
+sentence into a diff instead of leaving it in the paper.
 
 ---
 

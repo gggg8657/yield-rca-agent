@@ -6,7 +6,7 @@ every number below is regenerated into [`RESULTS.md`](RESULTS.md) by
 `scripts/report.py` from a JSON in `runs/`, and `scripts/report.py --check`
 fails CI if a document and a JSON disagree.*
 
-Last updated: Friday 2026-09-04, ~12:00.
+Last updated: Friday 2026-09-04, ~13:30.
 
 ---
 
@@ -14,13 +14,16 @@ Last updated: Friday 2026-09-04, ~12:00.
 
 Friday morning's session established the accuracy story: on real SECOM a plain
 random forest beats the multi-agent loop, and the top-5 stability KPI is missed
-by a wide margin. This session added the axis that was missing and it is worse
+by a wide margin. This session added the axis that was missing, and it is worse
 news for the architecture. **The loop reports root causes on data where none
 exist — 2,743 of them across 200 label-permuted replicates, abstaining on
-exactly none.** The safeguard the project is pitched on does not hold. The good
-news is that the underlying statistic is salvageable, so I implemented and
-priced a fix; the bad news is that a plain univariate ranker may be *better*
-calibrated than the loop, which is being measured right now.
+exactly none**, so the safeguard the project is pitched on does not hold. I
+implemented a null-calibrated abstention rule that fixes it and measured what it
+costs. Then I checked whether a plain univariate ranker would do the same job:
+it does it better, on every property measured. **The agent loop now has no
+measured advantage over a univariate ranker on any axis in this repository** —
+accuracy, stability, signal separation, or calibratable error control. It wins
+only on the synthetic generator, where its premise is true by construction.
 
 ---
 
@@ -37,6 +40,8 @@ calibrated than the loop, which is being measured right now.
 | **suspects SECOM supports at α = 0.05** | *[not measured]* | **0.60**, empty 51% of the time | `runs/abstain.json` **(new)** |
 | **sensors associated with failure at all** | *[not measured]* | **22 of 474** | `runs/invariance.json` **(new)** |
 | **those non-invariant across production periods** | *[not measured]* | **1** — and it is the loop's top suspect | same **(new)** |
+| **error control the loop's confidence can reach** | *[not measured]* | **91.6%** (95% target) | `runs/null_fdr_rankers.json` **(new)** |
+| **the same, for a plain univariate ranker** | *[not measured]* | **94.3%**, reporting 2.06 suspects vs the loop's 0.60 | same **(new)** |
 
 Nothing from Friday morning was re-run or revised. The two KPI verdicts stand:
 **AUC ≥ 0.75 met by the baseline, not by the agent loop; top-5 stability ≥ 80%
@@ -44,7 +49,7 @@ not met on any protocol.**
 
 ---
 
-## The three new results
+## The four new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -105,6 +110,29 @@ of 0.55–0.75, while SECOM's associated sensors carry |AUC − 0.5| of only
 the honest statement is that **the pipeline reports associational suspects** and
 this dataset cannot upgrade that.
 
+### 4. A univariate ranker does the whole job better
+
+The obvious question after result 2 is whether anything simpler would have
+calibrated as well. Matched to the loop's own bootstrap count and selection
+depth, plain rankers separate real from permuted labels *better* than the loop
+(`univariate` 0.943 vs 0.873) but their support **saturates** at 1.000, which
+caps their error control at 88.5% — below the loop's 91.6%. For one turn that
+looked like the architecture's first genuine win, and it was written up as such.
+
+It was wrong. What saturated was the *selection depth*, not the ranker: "top 40
+of 474 in all 12 resamples" is easy, "top 5 of 474 in all 40" is not.
+
+| arm | separation | error control | ceiling | suspects | abstains |
+|---|---|---|---|---|---|
+| `univariate` B=40, k=5 | **1.000** | **94.3%** | 100% | **2.06** | 0% |
+| `univariate` matched (k=40) | 0.943 | 88.5% | 88.5% | 4.10 | 0% |
+| **agent (full loop)** | 0.873 | 91.6% | 98.5% | 0.60 | 51% |
+
+The univariate variant takes every column, with no permutation-importance pass,
+no correlation grouping and no verification loop. **So the loop has no measured
+advantage on any axis here.** `RESULTS.md` carries an explicit note that this
+replaces the earlier conclusion rather than quietly overwriting it.
+
 ---
 
 ## What I tried that did not work, and what it rules out
@@ -112,6 +140,12 @@ this dataset cannot upgrade that.
 - **Blaming the never-empty fallback for the false discoveries.** Measured at
   0.0%. Rules out "delete four lines and it's fixed" — the threshold is the
   problem, so the fix has to be a calibrated bar.
+- **Concluding the loop was the only arm that could carry a false-discovery
+  guarantee.** True at the matched operating point, false as a statement about
+  the architecture, and I committed it before the follow-up run refuted it. Rules
+  out reading any single operating point as a property of the design — and it is
+  the reason every report section here is generated from JSON with data-driven
+  branches, so a refuted sentence turns into a diff rather than surviving.
 - **Permuting labels as the invariance null.** Reported 42 non-invariant sensors;
   the correct block-membership null reports 1. Permuting labels builds the
   reference at AUC 0.5, where the statistic has less sampling variance than at
@@ -150,7 +184,30 @@ crosses the 0.75 line.
 **My recommendation: (c).** It changes no number and removes the only reading of
 the card that is misleading.
 
-### Decision 2 — Whether to ship abstention on by default
+### Decision 2 — Whether to keep the agent loop at all
+
+This is the decision the weekend's results actually force, and it was not on
+Friday morning's list.
+
+- **(a) Keep it as the product.** Defensible only if the deliverable is the
+  written report and the correlation grouping, neither of which any measurement
+  here scores. Nothing measured supports it on accuracy, stability, separation
+  or error control.
+- **(b) Keep it, retargeted at the regime where it wins.** The synthetic
+  contrast is sharp and reproducible: where a few sensors genuinely dominate,
+  the loop beats the full-sensor forest and *meets* the stability KPI. Ship it
+  with a documented precondition and a cheap pre-flight test for signal
+  concentration.
+- **(c) Replace the ranking core with a univariate ranker at a non-saturating
+  depth**, keep the agent framing for reporting and grouping, and keep the
+  null-calibrated abstention rule. This is what the numbers point at.
+
+**My recommendation: (c), with (b)'s precondition documented.** It keeps
+everything that measures well and drops the part that does not. It is a large
+change to the project's premise, which is exactly why it is a decision and not
+something I made unilaterally.
+
+### Decision 3 — Whether to ship abstention on by default
 
 `report_tau` is implemented and off by default, so nothing has changed yet.
 
@@ -166,7 +223,7 @@ make it unilaterally. Note that under (b) or (c) the deliverable changes shape:
 the product is no longer "your five root causes" but "at most one or two, often
 none, and the honest reason why".
 
-### Decision 3 — Whether the stability KPI is attainable on SECOM at all
+### Decision 4 — Whether the stability KPI is attainable on SECOM at all
 
 With 104 fails, 70% of sensors non-stationary, and only 22 sensors showing any
 association, ≥80% top-5 agreement may not be reachable by any method on this
@@ -181,16 +238,17 @@ is still open — it needs a call, not more measurement.
 
 | job | started | expect | check |
 |---|---|---|---|
-| `scripts/null_fdr_rankers.py` (H2: is a plain ranker better calibrated than the loop?) | ~11:55 Fri | ~20 min, writes `runs/null_fdr_rankers.json` | `tail -5 runs/null_fdr_rankers.log` |
+| `scripts/null_fdr.py --select-k 5` (H4: is depth what limits the loop's error control too?) | ~13:25 Fri | ~32 min, writes `runs/null_fdr_k5.json` | `tail -5 runs/null_fdr_k5.log` |
 
-At n = 3 (smoke) the plain rankers separated real from null at 1.000 against the
-loop's 0.873 and supported 4–7 suspects at τ against the loop's 0.57. If that
-holds at n = 200, the loop has now lost on accuracy, on stability **and** on
-false-discovery calibration — the axis its verification machinery exists for —
-and that becomes the headline. The hypothesis was written down before the run
-(`critique_log.md`, Turn 4).
+H4 asks *why* the loop loses, not whether — the univariate arm has already
+cleared it either way. If the loop's control climbs into the 93–94% band when
+only its selection depth changes, the finding narrows to "selection depth
+dominates ranker choice", which is more useful to a practitioner than "this
+architecture underperforms". If it does not move, its permutation-importance
+estimator is the binding constraint. Hypothesis written down before the run
+(`critique_log.md`, Turn 6).
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
-(10 stages, CPU only, 16 workers). Tests: `tests/test_smoke.py` (2),
+(11 stages, CPU only, 16 workers). Tests: `tests/test_smoke.py` (2),
 `tests/test_real.py` (19), `tests/test_null.py` (11) — all green as of the last
 commit, which is pushed.
