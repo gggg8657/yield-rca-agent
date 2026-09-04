@@ -93,6 +93,19 @@ def test_agent_rca_fits_and_maps_indices_back():
     assert all(0.0 <= v <= 1.0 for v in m.stability_.values())
 
 
+def test_agent_rca_survives_pure_noise():
+    """No signal at all: every importance <= 0, and fit must still produce a model."""
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((300, 40))
+    y = (rng.uniform(size=300) < 0.1).astype(int)
+    m = AgentRCA(base="logreg", n_screen=20, n_screen_boot=10, select_k=8,
+                 stability_min=0.9, max_select=5, n_boot=3).fit(X, y)
+    assert len(m.selected_) >= 1, "must never hand the classifier zero columns"
+    p = m.predict_proba(X)
+    assert p.shape == (300, 2) and np.all(np.isfinite(p))
+    assert 0.0 <= float(roc_auc_score(y, p[:, 1])) <= 1.0
+
+
 def test_agent_ranking_puts_survivors_first():
     """The reported ranking must lead with what survived verification."""
     X, y, names, _ = _small()

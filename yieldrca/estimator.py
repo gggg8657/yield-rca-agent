@@ -196,6 +196,12 @@ class AgentRCA(BaseEstimator, ClassifierMixin):
         imp = self._rank(Xc, y, self.n_screen, self.n_inner, self.n_repeats, rs)
         order = np.argsort(imp)[::-1]
         suspects = [int(j) for j in order if imp[j] > 0][: self.max_select * 3]
+        if not suspects:
+            # On data with no signal, permuting any column can *improve* the
+            # held-out AUC, so every importance comes back <= 0 and there is
+            # nothing to select. Take the least-bad candidates rather than
+            # handing the classifier an empty matrix.
+            suspects = [int(j) for j in order[: max(self.top_k, 1)]]
 
         # --- 2. CorrelatorAgent: one representative per signal family ---
         groups = correlation_clusters(Xc, suspects, thresh=self.corr_thresh)
