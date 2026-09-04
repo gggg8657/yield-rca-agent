@@ -94,12 +94,15 @@ footnote on SECOM — they are most of the problem, and the standard way to get 
 too-good number is to resolve all three while looking at the whole dataset.
 Every such decision here is a `fit` on the training fold:
 
-- **Missing values.** Kept as `NaN` by the loader. Tree arms hand them to
-  `HistGradientBoostingClassifier`, which splits on missingness natively; the
-  other arms median-impute *per fold*. Because "the metrology step did not
-  report" is itself a signal in a fab, `MissingIndicatorAppender` re-attaches a
-  0/1 column for every sensor that has missing values in that fold, rather than
-  letting the median erase it.
+- **Missing values.** Kept as `NaN` by the loader, and resolved differently per
+  arm because the models differ: `hgb_all` hands them straight to
+  `HistGradientBoostingClassifier`, which learns a split direction for
+  missingness natively; the forest and logistic arms median-impute *per fold*.
+  Imputation destroys the fact that a value was absent, and in a fab "the
+  metrology step did not report" is itself a signal, so the logistic arm
+  re-attaches it explicitly — `MissingIndicatorAppender` adds a 0/1 column for
+  every sensor missing in that fold. (The forest arm does not; whether it would
+  help is untested here, and listed under Limits rather than assumed.)
 - **Constant columns.** Zero variance over the fold's observed values, so they
   carry nothing and make standardisation ill-posed. Dropped, with the reason
   recorded per column in `SensorCleaner.dropped_`.
@@ -369,6 +372,7 @@ tests/            test_smoke.py (numpy only) · test_real.py (sklearn path)
 - **104 positives.** That is the binding constraint on both KPIs, and no modelling choice in this repo escapes it. Fixing the stability number needs more failed wafers, not a better ranker.
 - **Sensors are anonymous.** A surviving suspect cannot be mapped to a tool or a process step, so a domain expert cannot sanity-check the list -- which is exactly the check that would matter most.
 - **Permutation importance is not a causal effect.** It measures what a fitted model leans on. Two near-identical sensors split it, and a genuine driver the screen missed never gets scored at all.
+- **Untested variations that could matter.** The missing-indicator columns are attached in the logistic arm but not the forest arm; the screen is multivariate-linear or model-native, so a sensor that matters only through an interaction can be missed before attribution ever sees it. Both are choices this repo made and did not ablate.
 - **The stability metric is protocol-sensitive.** Bootstrap and CV-fold resampling disagree by tens of points on the same ranker (see the table), so any "top-5 stability" figure quoted without its perturbation scheme is uninterpretable. This repo reports both and headlines the harder one.
 <!-- END:limits -->
 

@@ -149,6 +149,7 @@ A uniformly random ranker scores 1.1% raw (5 of 474 surviving sensors) and 1.4% 
 - **104 positives.** That is the binding constraint on both KPIs, and no modelling choice in this repo escapes it. Fixing the stability number needs more failed wafers, not a better ranker.
 - **Sensors are anonymous.** A surviving suspect cannot be mapped to a tool or a process step, so a domain expert cannot sanity-check the list -- which is exactly the check that would matter most.
 - **Permutation importance is not a causal effect.** It measures what a fitted model leans on. Two near-identical sensors split it, and a genuine driver the screen missed never gets scored at all.
+- **Untested variations that could matter.** The missing-indicator columns are attached in the logistic arm but not the forest arm; the screen is multivariate-linear or model-native, so a sensor that matters only through an interaction can be missed before attribution ever sees it. Both are choices this repo made and did not ablate.
 - **The stability metric is protocol-sensitive.** Bootstrap and CV-fold resampling disagree by tens of points on the same ranker (see the table), so any "top-5 stability" figure quoted without its perturbation scheme is uninterpretable. This repo reports both and headlines the harder one.
 
 ## Leakage controls

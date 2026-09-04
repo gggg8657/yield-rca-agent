@@ -115,6 +115,11 @@ def sec_limits(prof, st):
         "- **Permutation importance is not a causal effect.** It measures what "
         "a fitted model leans on. Two near-identical sensors split it, and a "
         "genuine driver the screen missed never gets scored at all.",
+        "- **Untested variations that could matter.** The missing-indicator "
+        "columns are attached in the logistic arm but not the forest arm; the "
+        "screen is multivariate-linear or model-native, so a sensor that "
+        "matters only through an interaction can be missed before attribution "
+        "ever sees it. Both are choices this repo made and did not ablate.",
     ]
     if st:
         L.append(
