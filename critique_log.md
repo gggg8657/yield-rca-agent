@@ -749,3 +749,79 @@ bootstrap replicates and 25 CV training folds as every other row, so the new row
 is directly comparable to the existing table. Queued behind H4 rather than
 launched now: H4 holds the 16-worker lease and oversubscribing it would slow
 both.
+
+---
+
+## Turn 9 (2026-09-04) — H4 verdict: refuted, and it exposes a guard that swaps roles
+
+`scripts/null_fdr.py --select-k 5`, 240 agent-loop fits, 31.4 min →
+`runs/null_fdr_k5.json`, priced by `scripts/abstain.py` →
+`runs/abstain_k5.json`. Same protocol, same held-out split-half calibration,
+`select_k` the only thing changed.
+
+| at α = 0.05 | agent `k=40` | agent `k=5` | `univariate` `k=5` |
+|---|---|---|---|
+| no-cause worlds kept silent | 91.6% | **91.5%** | **94.3%** |
+| suspects reported | 0.60 | 1.16 | 2.06 |
+| reports nothing (real) | 51% | 6% | 0% |
+
+**H4 predicted the loop's control would climb into the univariate variants'
+93–94% band when only its depth changed. It did not move at all** — 91.6% to
+91.5%, less than half a point. The competing explanation is the one supported:
+the loop's binding constraint is its permutation-importance estimator, not the
+depth it selects at. That is a property of the architecture rather than a
+parameter anyone can turn, and it is the answer a practitioner can act on.
+
+Depth is still worth turning down for the loop — the report goes from 0.60
+suspects to 1.16 and from empty 51% of the time to 6% — it simply does not close
+the error-control gap.
+
+**And the equal-effort comparison, which is what codex correctly demanded, comes
+out the same way as the tuned one.** At matched `select_k = 5` the univariate
+ranker leads on control by 2.8 points (94.3% vs 91.5%) and reports nearly twice
+as many suspects (2.06 vs 1.16). So the earlier conclusion was not an artifact of
+tuning one arm: it survives the symmetric test.
+
+### The thing I did not predict, and the second correction it forces
+
+On permuted labels:
+
+| | `select_k = 40` | `select_k = 5` |
+|---|---|---|
+| noise sensors clearing π = 0.3 **on merit** | 13.7 | **0.47** |
+| never-empty fallback fired | **0.0%** | **62.5%** |
+| replicates reporting nothing | 0.0% | 0.0% |
+
+At the pre-registered depth the threshold is so loose that 13.7 pure-noise
+sensors clear it unaided, and the fallback is genuinely never needed. Narrow the
+depth and **the threshold starts working almost perfectly** — 0.47 noise sensors
+survive it — **and the fallback fires on 62.5% of null replicates and puts them
+straight back.** Abstention is 0% at both depths, by two entirely different
+mechanisms.
+
+This corrects Turn 3, which concluded the guards were *not* the mechanism behind
+the false-discovery rate and that "lowering or raising the guard changes
+nothing". That was measured at `select_k = 40`, where it is true. At
+`select_k = 5` it is false: the guard is precisely what destroys an otherwise
+working filter. Both operating points are now measured and reported, and neither
+generalises to the other.
+
+That is the second time this weekend a conclusion drawn from one operating point
+failed at another — the first being the ranker saturation in Turn 5. The pattern
+is worth stating as a lesson rather than as two coincidences: **on this pipeline,
+a claim about a mechanism is only as general as the operating points it was
+measured at, and one is never enough.** Every mechanism claim in `RESULTS.md`
+now names the depth it was measured at.
+
+### Where this leaves the architecture
+
+Unchanged in direction, sharper in diagnosis. The loop still loses to a
+univariate ranker at equal effort on error control and report length, and the
+reason is now localised: not the depth, not the correlation grouping (+0.2
+points of stability), not the verification step (+2.1 points), but the held-out
+permutation-importance estimator that everything else is built on top of.
+
+Which is exactly what **H5** tests on the headline KPI, launched now that the
+worker lease is free: `scripts/stability_secom.py --only agent_model --append`.
+Prediction written down in Turn 8 before either run: top-5 bootstrap stability
+climbs from 22.3% toward `rf_impurity`'s 36.5%, and does not reach 80%.

@@ -296,6 +296,34 @@ Narrowing the selection depth removes the saturation entirely. Every variant row
 
 *This paragraph replaces an earlier conclusion in this repository's history.* The matched-settings comparison alone showed the loop as the only arm able to carry a false-discovery guarantee, and that was written up as its first genuine win. The follow-up run in the table above refuted it. Both are in `critique_log.md`; the earlier reading was wrong because it compared one operating point and generalised to an architecture.
 
+### Ranker or depth? (the symmetric run)
+
+The table above tunes the baseline's selection depth and leaves the loop at its pre-registered one, which answers *would something simpler have sufficed* and not *is the architecture worse at equal effort*. This is the second question, run with the loop's depth as the only thing changed. Priced by `scripts/abstain.py` on both sides, so the calibration is identical.
+
+| arm | tau | no-cause worlds kept silent | suspects reported | reports nothing |
+|---|---|---|---|---|
+| agent loop, `select_k = 40` (pre-registered) | 0.910 | 91.6% | 0.60 | 51% |
+| agent loop, `select_k = 5` | 0.439 | 91.5% | 1.16 | 6% |
+| `univariate (n_boot=40, select_k=5)` | 0.622 | 94.3% | 2.06 | 0% |
+
+**Depth barely moves the loop** (91.6% to 91.5%, by less than half a point), while it moved the univariate arm substantially. The loop's binding constraint is therefore its permutation-importance estimator rather than the depth it selects at -- and that is a property of the architecture, not a parameter someone can turn.
+
+What depth *does* buy the loop is a usable report: 1.16 suspects against 0.60, and an empty report on 6% of real replicates instead of 51%. So `select_k` is worth turning down; it just does not close the gap on error control.
+
+**And the mechanism swaps over, which is worth seeing.** The same two guards behave completely differently at the two depths:
+
+| on permuted labels | `select_k = 40` | `select_k = 5` |
+|---|---|---|
+| pure-noise sensors clearing the threshold on merit | 13.7 | 0.47 |
+| replicates where the never-empty fallback fired | 0.0% | 62.5% |
+| replicates reporting nothing at all | 0.0% | 0.0% |
+
+At the pre-registered depth the threshold is so loose that 13.7 noise sensors clear it unaided and the fallback is never needed. Narrow the depth and the threshold starts working -- only 0.47 noise sensors clear it -- but then the fallback fires on 62.5% of null replicates and puts the suspects back. **Abstention is 0% either way.** The guard is not redundant machinery that happens never to trigger; it is the thing that makes abstention impossible, and it only reveals itself once the threshold is set well enough to matter.
+
+This also corrects a reading recorded earlier in this repository: that the guards were *not* the mechanism behind the false-discovery rate. That was true at `select_k = 40` and false at `select_k = 5`. Both operating points are measured above, and neither generalises to the other.
+
+At matched depth the univariate ranker is still ahead on control, by +2.7 points (94.3% against 91.5%), and reports 2.06 suspects against 1.16. That is the equal-effort comparison, and it is the one the README's conclusion should rest on.
+
 ## Are the suspects causal, or only associated?
 
 Permutation importance is not a causal quantity: it measures how much a model leans on a column. The weakest claim with an actual identification argument behind it is invariance -- if a sensor really drives failure, its relationship with failure should survive a change of production period, and `runs/drift.json` already shows these periods are genuinely different environments. This is the marginal screen from Invariant Causal Prediction (Peters, Buhlmann & Meinshausen, JRSS-B 2016): a **necessary** condition for a stable cause, not a sufficient one. From `scripts/invariance.py`, written to `runs/invariance.json`.
@@ -373,8 +401,9 @@ The measurements point at one configuration, and it is not the one that scores b
 1. **Predict with every sensor -- with one asterisk.** Under the shuffled protocol selection costs AUC monotonically, because the signal is diffuse, so `rf_all` at 0.759 is the model to deploy. The asterisk is that forward in time the ordering reverses and the sparse arms come out ahead; that comparison has 4 origins behind it and its interval includes zero, so it is a reason to monitor and re-measure as wafers accumulate, not a reason to ship the sparse model today.
 2. **Do not ship the suspect list without a null-calibrated bar.** As it stands the loop reports 20.9 suspects and abstains on nothing, and on permuted labels it does the same -- so the list length carries no information about the process. `AgentRCA(report_tau=...)` fixes that: at alpha = 0.05 the report becomes 0.60 sensors and is empty 51.3% of the time. Prediction is untouched either way, so this costs no AUC.
 3. **Consider replacing the ranking core with a univariate ranker.** `univariate (n_boot=40, select_k=5)` reaches 94.3% error control against the loop's 91.6% and reports 2.06 suspects against 0.60, without a permutation-importance pass, a correlation-grouping step or a verification loop. Two caveats on that comparison are in the section above -- the depth was probed for the baseline, and the separation column rewards repeatability -- so read this as the strongest available reason to try the swap and measure, not as a settled result.
-4. **Believe the forward-in-time split, not the shuffled one.** For a go/no-go decision the shuffled-CV number is the optimistic one, and the drift diagnostics say why: era is far more predictable from these sensors than failure is. Plan on retraining, and treat any fixed model as having a shelf life measured in weeks.
-5. **Treat the suspect list as a work order, not a diagnosis.** The invariance screen cannot certify any of these sensors as causal at this sample size, so the useful output is a shortlist of signal *families* worth an engineer's afternoon -- and, with the bar above in place, sometimes no shortlist at all.
+4. **Tune the bootstrap selection depth before tuning anything else.** Dropping the loop's `select_k` from 40 to 5 moved its error control by -0.0 points on its own, so for this loop depth is not the lever it is for a univariate ranker.
+5. **Believe the forward-in-time split, not the shuffled one.** For a go/no-go decision the shuffled-CV number is the optimistic one, and the drift diagnostics say why: era is far more predictable from these sensors than failure is. Plan on retraining, and treat any fixed model as having a shelf life measured in weeks.
+6. **Treat the suspect list as a work order, not a diagnosis.** The invariance screen cannot certify any of these sensors as causal at this sample size, so the useful output is a shortlist of signal *families* worth an engineer's afternoon -- and, with the bar above in place, sometimes no shortlist at all.
 
 The honest summary of the KPI card: on SECOM this pipeline is a decent predictor and an unreliable attributor, its attribution is associational rather than causal, and the agent machinery is not what earns either -- a plain ranker matches or beats it on every axis measured here.
 

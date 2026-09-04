@@ -1604,7 +1604,7 @@ def sec_ranker_fdr(rk):
     return body
 
 
-def sec_depth(ab, ab_k5, rk):
+def sec_depth(ab, ab_k5, rk, nf=None, nf5=None):
     """Is it the ranker or the selection depth that limits error control?
 
     H4. The univariate arm's control jumped when its bootstrap selection depth
@@ -1675,16 +1675,58 @@ def sec_depth(ab, ab_k5, rk):
             f"setting was the better one for it.", "",
         ]
     else:
+        moved = (f"{d_ctl * 100:+.1f} points" if abs(d_ctl) >= 0.005
+                 else "by less than half a point")
         body += [
             f"**Depth barely moves the loop** "
             f"({pct(a40['null_abstention_heldout'])} to "
-            f"{pct(a5['null_abstention_heldout'])}, "
-            f"{d_ctl * 100:+.1f} points), while it moved the univariate arm "
-            f"substantially. The loop's binding constraint is therefore its "
-            f"permutation-importance estimator rather than the depth it "
-            f"selects at -- and that is a property of the architecture, not a "
-            f"parameter someone can turn.", "",
+            f"{pct(a5['null_abstention_heldout'])}, {moved}), while it moved "
+            f"the univariate arm substantially. The loop's binding constraint "
+            f"is therefore its permutation-importance estimator rather than "
+            f"the depth it selects at -- and that is a property of the "
+            f"architecture, not a parameter someone can turn.", "",
         ]
+        if a5["real_reported_mean"] > a40["real_reported_mean"] * 1.2:
+            body += [
+                f"What depth *does* buy the loop is a usable report: "
+                f"{a5['real_reported_mean']:.2f} suspects against "
+                f"{a40['real_reported_mean']:.2f}, and an empty report on "
+                f"{pct(a5['real_abstention'], 0)} of real replicates instead "
+                f"of {pct(a40['real_abstention'], 0)}. So `select_k` is worth "
+                f"turning down; it just does not close the gap on error "
+                f"control.", "",
+            ]
+    if nf and nf5:
+        n40, n5 = nf["null"], nf5["null"]
+        body += [
+            "**And the mechanism swaps over, which is worth seeing.** The "
+            "same two guards behave completely differently at the two depths:",
+            "",
+            table([
+                ["pure-noise sensors clearing the threshold on merit",
+                 f"{n40['n_merit_mean']:.1f}", f"{n5['n_merit_mean']:.2f}"],
+                ["replicates where the never-empty fallback fired",
+                 pct(n40["fallback_rate"]), pct(n5["fallback_rate"])],
+                ["replicates reporting nothing at all",
+                 pct(n40["abstention_rate"]), pct(n5["abstention_rate"])],
+            ], ["on permuted labels", "`select_k = 40`", "`select_k = 5`"]), "",
+            f"At the pre-registered depth the threshold is so loose that "
+            f"{n40['n_merit_mean']:.1f} noise sensors clear it unaided and the "
+            f"fallback is never needed. Narrow the depth and the threshold "
+            f"starts working -- only {n5['n_merit_mean']:.2f} noise sensors "
+            f"clear it -- but then the fallback fires on "
+            f"{pct(n5['fallback_rate'])} of null replicates and puts the "
+            f"suspects back. **Abstention is 0% either way.** The guard is not "
+            f"redundant machinery that happens never to trigger; it is the "
+            f"thing that makes abstention impossible, and it only reveals "
+            f"itself once the threshold is set well enough to matter.", "",
+            "This also corrects a reading recorded earlier in this "
+            "repository: that the guards were *not* the mechanism behind the "
+            "false-discovery rate. That was true at `select_k = 40` and false "
+            "at `select_k = 5`. Both operating points are measured above, and "
+            "neither generalises to the other.", "",
+        ]
+
     if uni:
         gap5 = uni["null_abstention_heldout"] - a5["null_abstention_heldout"]
         body += [
@@ -2073,6 +2115,7 @@ def build(runs: Path):
     iv = read_json(runs / "invariance.json")
     rk = read_json(runs / "null_fdr_rankers.json")
     ab5 = read_json(runs / "abstain_k5.json")
+    nf5 = read_json(runs / "null_fdr_k5.json")
     L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab, rk)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
@@ -2085,7 +2128,7 @@ def build(runs: Path):
     L += sec_null_fdr(nf)
     L += sec_abstain(ab)
     L += sec_ranker_fdr(rk)
-    L += sec_depth(ab, ab5, rk)
+    L += sec_depth(ab, ab5, rk, nf, nf5)
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
     L += sec_recommend(ev, ab, rk, ab5)
@@ -2143,7 +2186,8 @@ README_BLOCKS = {
     "null_fdr": lambda d: "\n".join(
         sec_null_fdr(d["nf"])[2:] + sec_abstain(d["ab"])).strip(),
     "ranker_fdr": lambda d: "\n".join(
-        sec_ranker_fdr(d["rk"])[2:] + sec_depth(d["ab"], d["ab5"], d["rk"])).strip(),
+        sec_ranker_fdr(d["rk"])[2:]
+        + sec_depth(d["ab"], d["ab5"], d["rk"], d["nf"], d["nf5"])).strip(),
     "invariance": lambda d: "\n".join(sec_invariance(d["iv"])[2:]).strip(),
     "recommend": lambda d: "\n".join(
         sec_recommend(d["ev"], d["ab"], d["rk"], d["ab5"])[2:]).strip(),
@@ -2164,6 +2208,7 @@ def inject(readme: str, runs: Path) -> str:
         "iv": read_json(runs / "invariance.json"),
         "rk": read_json(runs / "null_fdr_rankers.json"),
         "ab5": read_json(runs / "abstain_k5.json"),
+        "nf5": read_json(runs / "null_fdr_k5.json"),
     }
     for key, fn in README_BLOCKS.items():
         pat = re.compile(
