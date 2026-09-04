@@ -396,6 +396,77 @@ def sec_rolling(ev, prof=None):
     return body
 
 
+def sec_drift(dr):
+    if not dr:
+        return []
+    adv, ctl = dr["adversarial"]["auc"], dr["adversarial"]["auc_shuffled_control"]
+    sd, ld = dr["sensor_drift"], dr["label_drift"]
+    rows = [
+        ["adversarial validation: can the sensors tell you *when* a wafer was "
+         "made?", ci(adv), f"{dr['adversarial']['n_early']} early vs "
+                           f"{dr['adversarial']['n_late']} late wafers"],
+        ["the same test with the era label shuffled (control)", ci(ctl),
+         "must land at chance, or the row above means nothing"],
+        [f"sensors whose distribution moved between the first and last time "
+         f"block", f"{sd['n_significant']} of {sd['n_sensors_tested']} "
+                   f"({pct(sd['frac_significant'])})",
+         f"KS two-sample, Benjamini-Hochberg FDR "
+         f"{dr['protocol']['ks'].split('FDR ')[-1]}"],
+        ["median / p90 / max KS statistic per sensor",
+         f"{sd['ks_median']:.3f} / {sd['ks_p90']:.3f} / {sd['ks_max']:.3f}",
+         "0 = identical distributions, 1 = disjoint"],
+        ["fail rate across time blocks",
+         f"{pct(ld['fail_rate_min'])} to {pct(ld['fail_rate_max'])}",
+         f"chi-square p = {ld['chi2_p']:.3g}"],
+    ]
+    label_moves = ld["chi2_p"] < 0.05
+    body = ["## Is it really drift? (measured, not assumed)", "",
+            "\"The sensors drift\" is the obvious explanation for the section "
+            "above, and obvious explanations are exactly the ones that get "
+            "written into a README without being checked. Three checks, from "
+            "`scripts/drift.py`:", "",
+            table(rows, ["check", "value", "note"]), "",
+            f"The adversarial test is the decisive one. Label each wafer by "
+            f"*era* rather than by outcome -- early 70% versus late 30% -- and "
+            f"the same pipeline that struggles to reach "
+            f"{KPI_AUC:.2f} predicting **failure** separates the two eras at "
+            f"**{adv['mean']:.3f}** "
+            f"[{adv['ci_lo']:.3f}, {adv['ci_hi']:.3f}] from the sensors alone, "
+            f"against {ctl['mean']:.3f} for the shuffled control. "
+            + ("That is essentially perfect: "
+               if adv["mean"] > 0.95 else
+               "That is far above chance: " if adv["mean"] > 0.7 else
+               "That is only modestly above chance: ")
+            + f"the process data carries a much stronger signal about *when* a "
+              f"wafer was made than about *whether it failed*. The training and "
+              f"test halves of the chronological split are not two samples of "
+              f"one distribution, and {pct(sd['frac_significant'])} of "
+              f"individual sensors confirm it one at a time.", "",
+            ]
+    body += [
+        f"Label drift is "
+        + (f"also present: the fail rate ranges "
+           f"{pct(ld['fail_rate_min'])} to {pct(ld['fail_rate_max'])} across "
+           f"blocks (chi-square p = {ld['chi2_p']:.3g}), so part of the "
+           f"forward-in-time collapse is the *prior* moving, not only the "
+           f"features. The two effects are not separable at this sample size, "
+           f"and neither is a modelling problem to be fixed by a better "
+           f"ranker."
+           if label_moves else
+           f"comparatively mild: the fail rate ranges "
+           f"{pct(ld['fail_rate_min'])} to {pct(ld['fail_rate_max'])} across "
+           f"blocks and the chi-square test does not reject homogeneity "
+           f"(p = {ld['chi2_p']:.3g}), so what moves is mainly the sensor "
+           f"distributions rather than the failure prior."), "",
+        "This is also the cleanest argument for why the top-5 stability KPI is "
+        "hard here in a way no ranker fixes. If the sensors themselves are "
+        "non-stationary over the 90 days, \"the top 5 causes\" is not a fixed "
+        "quantity being estimated noisily -- it is a quantity that changes "
+        "while you estimate it.", "",
+    ]
+    return body
+
+
 def sec_sweep(sw):
     if not sw:
         return []
@@ -908,6 +979,7 @@ def build(runs: Path):
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
     L += sec_rolling(ev, prof)
+    L += sec_drift(read_json(runs / "drift.json"))
     L += sec_sweep(sw)
     L += sec_stability(st)
     L += sec_synthetic(sy)
@@ -956,6 +1028,7 @@ README_BLOCKS = {
     "sweep": lambda d: "\n".join(sec_sweep(d["sw"])[2:]).strip(),
     "rolling": lambda d: "\n".join(
         sec_rolling(d["ev"], d["prof"])[2:]).strip(),
+    "drift": lambda d: "\n".join(sec_drift(d["dr"])[2:]).strip(),
 }
 
 
@@ -966,6 +1039,7 @@ def inject(readme: str, runs: Path) -> str:
         "sw": read_json(runs / "secom_loop_sweep.json"),
         "st": read_json(runs / "secom_stability.json"),
         "sy": read_json(runs / "synthetic.json"),
+        "dr": read_json(runs / "drift.json"),
     }
     for key, fn in README_BLOCKS.items():
         pat = re.compile(

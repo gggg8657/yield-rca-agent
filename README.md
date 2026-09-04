@@ -164,6 +164,11 @@ Test blocks grow from 314 wafers (21 fails) as the training window expands, so i
 
 ![shuffled CV versus a chronological split, per arm](assets/fig_protocol.png)
 
+## Is it really drift?
+
+<!-- BEGIN:drift -->
+<!-- END:drift -->
+
 <!-- BEGIN:sweep -->
 The agent loop's structural settings are fixed in advance rather than tuned, which is only defensible if the surface around them is published instead of hidden. Same protocol as above (RepeatedStratifiedKFold(5 x 2, seed 0); identical folds for every row), 10 folds, 11 min:
 
@@ -285,6 +290,7 @@ BLAS thread per worker. Individual stages:
 python scripts/eval_secom.py      --repeats 5 --jobs 16   # baselines vs the loop
 python scripts/sweep_loop.py      --repeats 2 --jobs 16   # loop sensitivity
 python scripts/stability_secom.py --boot 200 --jobs 16    # the top-5 KPI
+python scripts/drift.py           --jobs 16               # is it really drift?
 python scripts/eval_synthetic.py  --seeds 10 --jobs 10    # ground-truth recovery
 python scripts/report.py                                  # RESULTS.md + README
 ```

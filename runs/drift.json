@@ -1,0 +1,72 @@
+{
+  "protocol": {
+    "adversarial": "label = wafer in the last 30% by time; RepeatedStratifiedKFold(5 x 3, seed 0) on the sensors alone, same pipeline as `rf_all`",
+    "ks": "KS_2samp between time block 0 and block 4 per surviving sensor, Benjamini-Hochberg at FDR 0.01",
+    "label_drift": "fail rate over 5 contiguous time blocks, chi-square test of homogeneity"
+  },
+  "adversarial": {
+    "auc": {
+      "mean": 0.992614420214974,
+      "ci_lo": 0.9907040526848625,
+      "ci_hi": 0.9945247877450856,
+      "sd": 0.00344967715015074,
+      "n": 15
+    },
+    "auc_shuffled_control": {
+      "mean": 0.5157011826219055,
+      "ci_lo": 0.4999040923982162,
+      "ci_hi": 0.5314982728455947,
+      "sd": 0.02852585187120906,
+      "n": 15
+    },
+    "n_early": 1097,
+    "n_late": 470
+  },
+  "sensor_drift": {
+    "n_sensors_tested": 458,
+    "n_significant": 324,
+    "frac_significant": 0.7074235807860262,
+    "bh_p_cutoff": 0.005270969655657169,
+    "ks_median": 0.20519078495135848,
+    "ks_p90": 0.4338929726576688,
+    "ks_max": 0.7910582259815266
+  },
+  "label_drift": {
+    "per_block": [
+      {
+        "block": 0,
+        "n": 314,
+        "n_fail": 44,
+        "fail_rate": 0.14012738853503184
+      },
+      {
+        "block": 1,
+        "n": 314,
+        "n_fail": 21,
+        "fail_rate": 0.06687898089171974
+      },
+      {
+        "block": 2,
+        "n": 313,
+        "n_fail": 11,
+        "fail_rate": 0.03514376996805112
+      },
+      {
+        "block": 3,
+        "n": 313,
+        "n_fail": 11,
+        "fail_rate": 0.03514376996805112
+      },
+      {
+        "block": 4,
+        "n": 313,
+        "n_fail": 17,
+        "fail_rate": 0.054313099041533544
+      }
+    ],
+    "fail_rate_min": 0.03514376996805112,
+    "fail_rate_max": 0.14012738853503184,
+    "chi2": 38.15420051340595,
+    "chi2_p": 1.0414096927479422e-07
+  }
+}
