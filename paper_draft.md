@@ -302,6 +302,43 @@ thresholds a bounded support statistic should report the attainable ceiling next
 to the achieved rate, because a saturated statistic looks maximally confident
 and is minimally calibratable.
 
+### 5.4 Ranker or depth? The symmetric comparison
+
+Tuning the baseline's depth while leaving the pipeline at its pre-registered one
+answers "would something simpler have sufficed" and not "is the architecture
+worse at equal effort". We therefore ran the loop at the same `select_k = 5`,
+changing nothing else.
+
+Its error control does not move: 91.6% to 91.5%. Depth explains the baseline's
+behaviour entirely and the loop's not at all, which localises the loop's
+disadvantage in the held-out permutation-importance estimator rather than in a
+tunable parameter. At matched depth the univariate ranker still leads control by
+2.8 points and reports 2.06 suspects against 1.16, so the equal-effort
+comparison reaches the same conclusion as the tuned one.
+
+The unanticipated finding is more interesting than the predicted one. On
+permuted labels the two guards inside `fit` behave oppositely at the two depths:
+
+| on permuted labels | `select_k = 40` | `select_k = 5` |
+|---|---|---|
+| noise sensors clearing the threshold on merit | 13.7 | 0.47 |
+| never-empty fallback fired | 0.0% | 62.5% |
+| replicates reporting nothing | 0.0% | 0.0% |
+
+At the loose depth the stability threshold filters nothing and the fallback is
+never invoked. At the tight depth **the threshold works almost perfectly and the
+fallback then reinstates the sensors it removed**, on nearly two thirds of null
+replicates. The false-discovery rate is 1.0 at both depths, by two mechanisms
+that share nothing.
+
+This is worth stating as a general caution about ablating agent pipelines. A
+component that appears inert at one operating point — the fallback fired on 0%
+of replicates and looked like dead code — can be the decisive one at another. We
+drew the inert reading first, wrote it up, and had to retract it when the second
+depth was measured. Ablations of such systems should report the operating point
+they were run at, and a component should not be called redundant on the strength
+of a single one.
+
 ---
 
 ## 6. Are the suspects causal? A negative result with its power attached
@@ -427,6 +464,12 @@ too small to settle it.
    sample size -- quantified rather than glossed (§6.3).
 5. 104 failures bounds everything. Several results here are "this dataset cannot
    settle it", which is honest but is not the same as settled.
+6. Two conclusions in this work were drawn from a single operating point and
+   refuted by measuring a second: the saturation ceiling (§5.3) and the
+   never-empty guard (§5.4). We report both the refuted and the surviving
+   reading, and we cannot rule out that other claims here are similarly
+   depth-specific -- the operating points we happened to probe are not a
+   systematic sweep.
 
 ---
 
