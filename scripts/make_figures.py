@@ -136,15 +136,14 @@ def fig_sparsity(sw, out):
     _grid(ax, axis="both")
     ax.axhspan(base["ci_lo"], base["ci_hi"], color=GRID, zorder=1)
     ax.axhline(base["mean"], color=INK_MUTED, linewidth=1.3, zorder=2)
-    ax.text(1.15, base["mean"], f" rf_all, all sensors  {base['mean']:.3f}",
-            fontsize=8.5, color=INK_2, va="bottom", ha="left")
     ax.axhline(KPI_AUC, color=INK_MUTED, linestyle=(0, (4, 3)), linewidth=1.2,
                zorder=2)
-    ax.text(1.15, KPI_AUC, f" KPI {KPI_AUC:.2f}", fontsize=8, color=INK_2,
-            va="top", ha="left")
     colors = ["#2a78d6", "#eb6834"]
     handles = []
-    for (mode, vals), c in zip(sorted(pts.items()), colors):
+    # one series labels above its markers, the other below, so the two
+    # attribution modes' value labels never collide at matched sparsity
+    offsets = [(0, 11), (0, -15)]
+    for (mode, vals), c, off in zip(sorted(pts.items()), colors, offsets):
         vals.sort()
         xs = [v[0] for v in vals]
         ys = [v[1] for v in vals]
@@ -160,8 +159,17 @@ def fig_sparsity(sw, out):
                    linewidth=1.6)
         for x, y, *_ in vals:
             ax.annotate(f"{y:.3f}", (x, y), textcoords="offset points",
-                        xytext=(0, -13), ha="center", fontsize=7.5, color=INK_2)
+                        xytext=off, ha="center", fontsize=7.5, color=INK_2)
     ax.set_xscale("log")
+    xs_all = [v[0] for vs in pts.values() for v in vs]
+    ax.set_xlim(min(xs_all) * 0.72, max(xs_all) * 2.9)
+    # the reference lines are labelled where the curves are not: the
+    # sparse end sits far below both lines, the dense end runs into them
+    ax.text(ax.get_xlim()[0], base["mean"] + 0.002,
+            f" rf_all, all sensors  {base['mean']:.3f}", fontsize=8.5,
+            color=INK_2, va="bottom", ha="left")
+    ax.text(ax.get_xlim()[0], KPI_AUC - 0.002, f" KPI {KPI_AUC:.2f}",
+            fontsize=8, color=INK_2, va="top", ha="left")
     ax.set_xlabel("sensors handed to the final classifier (mean over folds)")
     ax.set_ylabel("ROC-AUC")
     ax.set_title("Every sensor the loop drops costs accuracy",
