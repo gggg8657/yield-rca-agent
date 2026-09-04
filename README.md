@@ -342,6 +342,7 @@ python scripts/eval_secom.py      --repeats 5 --jobs 16   # baselines vs the loo
 python scripts/sweep_loop.py      --repeats 2 --jobs 16   # loop sensitivity
 python scripts/stability_secom.py --boot 200 --jobs 16    # the top-5 KPI
 python scripts/drift.py           --jobs 16               # is it really drift?
+python scripts/rolling_sweep.py   --jobs 16               # reversal robustness
 python scripts/eval_synthetic.py  --seeds 10 --jobs 10    # ground-truth recovery
 python scripts/report.py                                  # RESULTS.md + README
 ```

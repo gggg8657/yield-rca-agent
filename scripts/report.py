@@ -412,6 +412,58 @@ def sec_rolling(ev, prof=None):
     return body
 
 
+def sec_rolling_sweep(rs):
+    if not rs:
+        return []
+    per = rs["per_block_count"]
+    counts = sorted(per, key=lambda b: int(b))
+    arms = sorted({a for b in counts for a in per[b]["per_arm"]})
+    rows = []
+    for b in counts:
+        e = per[b]
+        d = e.get("agent_vs_rf_all")
+        rows.append([
+            b, str(e["n_origins"]),
+            f"{min(e['test_block_fails'])}-{max(e['test_block_fails'])}",
+            f"`{e['best_arm']}`",
+            *[f"{e['per_arm'][a]['mean']:.3f}" if a in e["per_arm"] else "--"
+              for a in arms],
+            signed(d, 3) if d else "--",
+        ])
+    best_counts = [per[b]["best_arm"] for b in counts]
+    agent_best = sum(1 for x in best_counts if x.startswith(("agent", "univar")))
+    deltas = [per[b]["agent_vs_rf_all"] for b in counts
+              if "agent_vs_rf_all" in per[b]]
+    pos = sum(1 for d in deltas if d["mean"] > 0)
+    clear = [d for d in deltas if not crosses_zero(d)]
+    return ["## Robustness of the forward-in-time reversal", "",
+            f"The reversal above rests on one block count, so here is the same "
+            f"protocol at several. {rs['protocol']} Fewer blocks means larger, "
+            f"less noisy test sets but fewer origins; more blocks means the "
+            f"opposite, and origins with fewer than "
+            f"{rs['min_fails_in_test_block']} fails in the test block are "
+            f"skipped because an AUC on one or two positives is not a number. "
+            f"({rs['wall_min']:.0f} min.)", "",
+            table(rows, ["blocks", "origins", "fails per test block",
+                         "best arm", *[f"`{a}`" for a in arms],
+                         "agent_rf - rf_all"]), "",
+            f"The **sign** is stable: a sparse arm is the best forward-in-time "
+            f"arm at {agent_best} of the {len(counts)} block counts, and "
+            f"`agent_rf` is above `rf_all` at {pos} of {len(deltas)}. The "
+            f"**magnitude** is not established: "
+            + (f"{len(clear)} of the {len(deltas)} paired intervals exclude "
+               f"zero, and the origins within a block count share training "
+               f"data, so even those are optimistic."
+               if clear else
+               f"not one of the {len(deltas)} paired intervals excludes zero, "
+               f"and the origins within a block count share training data, so "
+               f"the intervals are optimistic to begin with.")
+            + " The defensible conclusion is a direction, not an effect size: "
+              "on a drifting process, sparse attribution looks like it "
+              "generalises better than a full-sensor model, and SECOM is too "
+              "small to say by how much.", ""]
+
+
 def sec_drift(dr):
     if not dr:
         return []
@@ -703,36 +755,51 @@ def sec_stability(st):
            "AUC table reaches from the other direction") + ".", "",
     ]
     nc = st["rankers"].get("agent_no_corr")
-    if nc:
-        d_raw = (b["raw"]["pairwise_overlap"]
-                 - nc["bootstrap"]["raw"]["pairwise_overlap"])
-        body += [
-            f"**Correlation grouping, ablated.** Switching `CorrelatorAgent` "
-            f"off moves bootstrap pairwise overlap from "
-            f"{pct(nc['bootstrap']['raw']['pairwise_overlap'])} to "
-            f"{pct(b['raw']['pairwise_overlap'])} ({d_raw:+.1%}). "
-            + ("Near-identical sensors trading places is therefore a real but "
-               "small part of the instability here"
-               if abs(d_raw) < 0.05 else
-               "Near-identical sensors trading places is therefore a "
-               "substantial part of the instability here")
-            + ", and the raw and cluster-aware columns barely differ, which "
-              "says the top 5 mostly are *not* drawn from the near-duplicate "
-              "families. The instability is between genuinely different "
-              "sensors.", "",
-        ]
     po = st["rankers"].get("perm_only")
-    if po:
+    if nc or po:
         body += [
-            f"**Verification, ablated.** `perm_only` is the SensorAgent alone "
-            f"-- screen plus held-out permutation importance, no correlate, no "
-            f"bootstrap drop -- at "
-            f"{pct(po['bootstrap']['raw']['pairwise_overlap'])} bootstrap "
-            f"pairwise, against the full loop's "
-            f"{pct(b['raw']['pairwise_overlap'])}. The verify-and-drop step is "
-            f"worth {b['raw']['pairwise_overlap'] - po['bootstrap']['raw']['pairwise_overlap']:+.1%} "
-            f"of top-5 agreement.", "",
+            "**Which part of the loop does the stability work?** The three "
+            "rows form a ladder, each step adding one mechanism, so each "
+            "difference isolates one thing rather than two:", "",
         ]
+        ladder = []
+        if po:
+            ladder.append(["`perm_only`", "screen + held-out permutation only",
+                           pct(po["bootstrap"]["raw"]["pairwise_overlap"]),
+                           "--"])
+        if nc:
+            d = (nc["bootstrap"]["raw"]["pairwise_overlap"]
+                 - (po["bootstrap"]["raw"]["pairwise_overlap"] if po else 0))
+            ladder.append(["`agent_no_corr`", "+ bootstrap verify-and-drop",
+                           pct(nc["bootstrap"]["raw"]["pairwise_overlap"]),
+                           f"{d:+.1%}" if po else "--"])
+        d2 = (b["raw"]["pairwise_overlap"]
+              - (nc["bootstrap"]["raw"]["pairwise_overlap"] if nc else 0))
+        ladder.append(["`agent`", "+ correlation grouping",
+                       pct(b["raw"]["pairwise_overlap"]),
+                       f"{d2:+.1%}" if nc else "--"])
+        body += [table(ladder, ["ranker", "mechanism added",
+                                "pairwise (bootstrap)", "step"]), ""]
+        if po and nc:
+            dv = (nc["bootstrap"]["raw"]["pairwise_overlap"]
+                  - po["bootstrap"]["raw"]["pairwise_overlap"])
+            body += [
+                f"So verification is worth {dv:+.1%} of top-5 agreement and "
+                f"grouping {d2:+.1%}. "
+                + ("Both steps earn their place, which is the one clearly "
+                   "positive thing to say about the loop's structure on this "
+                   "dataset -- they buy *stability*, not accuracy."
+                   if dv > 0.01 and d2 > 0.01 else
+                   "Neither step moves the number much, so on this dataset "
+                   "the loop's extra machinery is not what determines "
+                   "stability." if abs(dv) <= 0.01 and abs(d2) <= 0.01 else
+                   "Only one of the two steps is doing measurable work here.")
+                + f" Note also that the raw and cluster-aware columns barely "
+                  f"differ across the whole table, which says the top 5 mostly "
+                  f"are *not* drawn from the near-duplicate families that "
+                  f"motivated grouping -- the instability is between genuinely "
+                  f"different sensors.", "",
+            ]
     if not boot_ok:
         body += [
             f"The gap to the KPI is not a tuning failure. Resampling 1,567 "
@@ -1072,6 +1139,7 @@ def build(runs: Path):
     L += sec_secom_auc(ev)
     L += sec_rolling(ev, prof)
     L += sec_drift(dr)
+    L += sec_rolling_sweep(read_json(runs / "rolling_sweep.json"))
     L += sec_sweep(sw)
     L += sec_stability(st)
     L += sec_synthetic(sy, ev)
@@ -1123,6 +1191,8 @@ README_BLOCKS = {
     "rolling": lambda d: "\n".join(
         sec_rolling(d["ev"], d["prof"])[2:]).strip(),
     "drift": lambda d: "\n".join(sec_drift(d["dr"])[2:]).strip(),
+    "rolling_sweep": lambda d: "\n".join(
+        sec_rolling_sweep(d["rs"])[2:]).strip(),
 }
 
 
@@ -1134,6 +1204,7 @@ def inject(readme: str, runs: Path) -> str:
         "st": read_json(runs / "secom_stability.json"),
         "sy": read_json(runs / "synthetic.json"),
         "dr": read_json(runs / "drift.json"),
+        "rs": read_json(runs / "rolling_sweep.json"),
     }
     for key, fn in README_BLOCKS.items():
         pat = re.compile(

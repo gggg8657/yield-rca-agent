@@ -13,22 +13,25 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 JOBS=16
 mkdir -p runs
 
-echo "== 1/6 data profile =="
+echo "== 1/7 data profile =="
 "$PY" scripts/prepare_data.py
 
-echo "== 2/6 headline SECOM evaluation (baselines vs agent loop) =="
+echo "== 2/7 headline SECOM evaluation (baselines vs agent loop) =="
 "$PY" scripts/eval_secom.py --repeats 5 --jobs "$JOBS"
 
-echo "== 3/6 agent-loop sensitivity sweep =="
+echo "== 3/7 agent-loop sensitivity sweep =="
 "$PY" scripts/sweep_loop.py --repeats 2 --jobs "$JOBS"
 
-echo "== 4/6 top-5 stability KPI =="
+echo "== 4/7 top-5 stability KPI =="
 "$PY" scripts/stability_secom.py --boot 200 --jobs "$JOBS"
 
-echo "== 5/6 drift diagnostics =="
+echo "== 5/7 drift diagnostics =="
 "$PY" scripts/drift.py --jobs "$JOBS"
 
-echo "== 6/6 synthetic ground-truth benchmark =="
+echo "== 6/7 rolling-origin robustness =="
+"$PY" scripts/rolling_sweep.py --jobs "$JOBS"
+
+echo "== 7/7 synthetic ground-truth benchmark =="
 "$PY" scripts/eval_synthetic.py --seeds 10 --jobs 10
 
 echo "== report =="
