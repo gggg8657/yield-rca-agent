@@ -10,6 +10,7 @@ Run environment: CPU only, Python 3.11.15, scikit-learn 1.8.0, numpy 2.3.5; the 
 - **The agent loop does not beat that baseline -- it loses to it.** Same folds, paired per fold: **-0.042 [-0.058, -0.025]** AUC (4 folds better, 21 worse, Wilcoxon p = 6.4e-05). At its pre-registered operating point the loop reaches 0.717 and misses the KPI on its own, and it does not separate from a univariate top-25 selection at the same sparsity (-0.012 [-0.028, +0.004], an interval that includes zero). The plan/verify machinery is not what is buying the number.
 - **Sparsity is the price, and it is not negotiable.** Sweeping the loop's settings, AUC tracks how many sensors survive. The leanest configuration whose paired CI still reaches the baseline is `agent_operating_model` at -0.0262 [-0.0524, +0.0000], keeping about 25 sensors -- but that CI only just touches zero, so read it as a boundary case rather than a tie; the leanest *unambiguous* tie keeps about 45. The loop can match a full-sensor forest, but only by declining to be a shortlist -- every setting that returns a list short enough for an engineer to work through is measurably worse.
 - **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Repeating the exercise at every origin -- train on the past, test on the next block of wafers -- puts the best arm at 0.656 (`agent_rf`), so this is not one unlucky split. Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
+- **And the drift is measured, not assumed.** Label each wafer by *era* instead of outcome -- early 70% versus late 30% -- and the same pipeline separates the two eras from the sensors alone at **0.993** AUC (0.516 with the era label shuffled). The process data says far more about *when* a wafer was made than about *whether it failed*: 70.7% of sensors shift significantly between the first and last time block, and the fail rate itself runs 3.5% to 14.0% across blocks (chi-square p = 1e-07). On a non-stationary process, "the top 5 causes" is not a fixed quantity measured noisily -- it is a quantity that moves while you measure it.
 - **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding.
 
 ## The data, as it actually arrives
@@ -77,6 +78,24 @@ Two things happen at once here, and only one of them is solid.
 **Not solid: the ranking inverts.** Only 9 of the 15 arm pairs keep their shuffled-CV order, and the best arm forward in time is `agent_rf` (0.656, an agent arm) rather than `rf_all`. Paired over the 4 origins, the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest -- an interval that includes zero, so this is a *suggestion*, not a result. The mechanism is plausible -- a model holding 20 sensors has fewer ways to lean on one that drifts than one holding all 474, so selection should pay off exactly when the test distribution moves -- and that is a reason to test it properly, not to claim it. 4 origins with per-origin AUCs spanning 0.381 to 0.863 cannot settle it.
 
 Test blocks grow from 314 wafers (21 fails) as the training window expands, so individual origins are noisy by construction. The honest summary: SECOM's shuffled-CV numbers are the optimistic ones, a yield predictor trained this way should not be expected to hold for the next month of wafers without retraining, and whether sparse attribution helps under drift is the experiment this dataset is too small to run.
+
+## Is it really drift? (measured, not assumed)
+
+"The sensors drift" is the obvious explanation for the section above, and obvious explanations are exactly the ones that get written into a README without being checked. Three checks, from `scripts/drift.py`:
+
+| check | value | note |
+|---|---|---|
+| adversarial validation: can the sensors tell you *when* a wafer was made? | 0.993 [0.991, 0.995] | 1097 early vs 470 late wafers |
+| the same test with the era label shuffled (control) | 0.516 [0.500, 0.531] | must land at chance, or the row above means nothing |
+| sensors whose distribution moved between the first and last time block | 324 of 458 (70.7%) | KS two-sample, Benjamini-Hochberg FDR 0.01 |
+| median / p90 / max KS statistic per sensor | 0.205 / 0.434 / 0.791 | 0 = identical distributions, 1 = disjoint |
+| fail rate across time blocks | 3.5% to 14.0% | chi-square p = 1.04e-07 |
+
+The adversarial test is the decisive one. Label each wafer by *era* rather than by outcome -- early 70% versus late 30% -- and the same pipeline that struggles to reach 0.75 predicting **failure** separates the two eras at **0.993** [0.991, 0.995] from the sensors alone, against 0.516 for the shuffled control. That is essentially perfect: the process data carries a much stronger signal about *when* a wafer was made than about *whether it failed*. The training and test halves of the chronological split are not two samples of one distribution, and 70.7% of individual sensors confirm it one at a time.
+
+Label drift is also present: the fail rate ranges 3.5% to 14.0% across blocks (chi-square p = 1.04e-07), so part of the forward-in-time collapse is the *prior* moving, not only the features. The two effects are not separable at this sample size, and neither is a modelling problem to be fixed by a better ranker.
+
+This is also the cleanest argument for why the top-5 stability KPI is hard here in a way no ranker fixes. If the sensors themselves are non-stationary over the 90 days, "the top 5 causes" is not a fixed quantity being estimated noisily -- it is a quantity that changes while you estimate it.
 
 ## Is the pre-registered operating point the problem?
 

@@ -762,7 +762,7 @@ def sec_synthetic(sy):
     ]
 
 
-def sec_headline(ev, st, sy, sw, prof=None):
+def sec_headline(ev, st, sy, sw, prof=None, dr=None):
     """The handful of sentences a reader should leave with, computed not asserted."""
     if not ev:
         return []
@@ -863,6 +863,24 @@ def sec_headline(ev, st, sy, sw, prof=None):
           f"the scorecard reports -- but the forward-in-time number is the one "
           f"an engineer should believe."
         if prof else "")
+    if dr:
+        adv = dr["adversarial"]["auc"]
+        sd, ld = dr["sensor_drift"], dr["label_drift"]
+        L.append(
+            f"- **And the drift is measured, not assumed.** Label each wafer "
+            f"by *era* instead of outcome -- early 70% versus late 30% -- and "
+            f"the same pipeline separates the two eras from the sensors alone "
+            f"at **{adv['mean']:.3f}** AUC "
+            f"({dr['adversarial']['auc_shuffled_control']['mean']:.3f} with "
+            f"the era label shuffled). The process data says far more about "
+            f"*when* a wafer was made than about *whether it failed*: "
+            f"{pct(sd['frac_significant'])} of sensors shift significantly "
+            f"between the first and last time block, and the fail rate itself "
+            f"runs {pct(ld['fail_rate_min'])} to {pct(ld['fail_rate_max'])} "
+            f"across blocks (chi-square p = {ld['chi2_p']:.1g}). On a "
+            f"non-stationary process, \"the top 5 causes\" is not a fixed "
+            f"quantity measured noisily -- it is a quantity that moves while "
+            f"you measure it.")
     ro = ev.get("rolling_origin")
     if ro and "agent_rf" in ro and "rf_all" in ro:
         dro = paired_delta([r["auc"] for r in ro["agent_rf"]["per_origin"]],
@@ -974,12 +992,13 @@ def build(runs: Path):
               f"numpy {e['numpy']}; the cross-validation in "
               f"`runs/secom_eval.json` took {e['cv_wall_min']:.1f} min on 16 "
               "workers.", ""]
-    L += sec_headline(ev, st, sy, sw, prof)
+    dr = read_json(runs / "drift.json")
+    L += sec_headline(ev, st, sy, sw, prof, dr)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
     L += sec_rolling(ev, prof)
-    L += sec_drift(read_json(runs / "drift.json"))
+    L += sec_drift(dr)
     L += sec_sweep(sw)
     L += sec_stability(st)
     L += sec_synthetic(sy)
@@ -1019,7 +1038,8 @@ README_BLOCKS = {
     "intro_data": lambda d: "\n".join(sec_intro(d["prof"], d["ev"])).strip(),
     "limits": lambda d: "\n".join(sec_limits(d["prof"], d["st"])[2:]).strip(),
     "headline": lambda d: "\n".join(
-        sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"])[2:]).strip(),
+        sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"],
+                     d["dr"])[2:]).strip(),
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),
