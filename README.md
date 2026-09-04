@@ -62,9 +62,13 @@ not ship an answer key, and no amount of attribution machinery creates one. So
 data, and it is never carried over. A ranked SECOM suspect list is a
 *hypothesis for an engineer to go test on the tool*, not a recovered cause.
 
+## KPI scorecard
+
 <!-- BEGIN:kpi -->
 
 <!-- END:kpi -->
+
+## The data, as it actually arrives
 
 <!-- BEGIN:dataset -->
 Every count here is measured by `scripts/prepare_data.py`, not quoted from the dataset description:
@@ -121,6 +125,8 @@ Every such decision here is a `fit` on the training fold:
 The count of what each rule removes is in the dataset table above, measured by
 `scripts/prepare_data.py`.
 
+## SECOM: prediction
+
 <!-- BEGIN:secom_auc -->
 25 folds, identical for every arm (RepeatedStratifiedKFold(5 splits x 5 repeats, seed 0) = 25 folds). Baseline hyperparameters are chosen by an inner 3-fold grid search on each outer training fold, so no baseline here is the best of a grid scored on the test folds. The delta column is a **paired** per-fold difference against `rf_all`.
 
@@ -144,6 +150,8 @@ The chronological column trains on the earliest 1097 wafers and tests on the las
 <!-- END:secom_auc -->
 
 ![SECOM AUC by arm, with 95% confidence intervals](assets/fig_secom_auc.png)
+
+## Does it survive going forward in time?
 
 <!-- BEGIN:rolling -->
 One chronological split can be one unlucky fortnight, so the same question is asked at every origin: 5 contiguous time blocks; train on blocks 0..k, test on block k+1, for k = 0..3. This is the only protocol here that answers *would this have worked had we deployed it* -- it never trains on a wafer produced after the one it scores.
@@ -189,6 +197,8 @@ Label drift is also present: the fail rate ranges 3.5% to 14.0% across blocks (c
 This is also the cleanest argument for why the top-5 stability KPI is hard here in a way no ranker fixes. If the sensors themselves are non-stationary over the 90 days, "the top 5 causes" is not a fixed quantity being estimated noisily -- it is a quantity that changes while you estimate it.
 <!-- END:drift -->
 
+## Is the pre-registered operating point the problem?
+
 <!-- BEGIN:sweep -->
 The agent loop's structural settings are fixed in advance rather than tuned, which is only defensible if the surface around them is published instead of hidden. Same protocol as above (RepeatedStratifiedKFold(5 x 2, seed 0); identical folds for every row), 10 folds, 12 min:
 
@@ -222,6 +232,8 @@ One design axis does pay: scoring suspects by the base model's own importance av
 
 ![AUC against the number of sensors the loop keeps](assets/fig_sparsity.png)
 
+## SECOM: top-5 stability
+
 <!-- BEGIN:stability -->
 The metric was defined in `yieldrca/stability.py` before it was measured, because it has enough degrees of freedom that defining it afterwards would be meaningless. **Primary: mean pairwise top-5 overlap** -- the average, over all pairs of resamples, of |T_b n T_b'| / 5, where T_b is the top 5 of a ranking re-derived from scratch on resample b. It has no reference set, so it cannot be inflated by choosing the reference after the fact. The **consensus** column instead picks the 5 most frequent sensors *after* seeing every resample and averages their selection frequency, which is why it is always the friendlier number. The **cluster** columns map each sensor to its |r| >= 0.99 correlation group first.
 
@@ -238,6 +250,8 @@ A uniformly random ranker scores 1.1% raw (5 of 474 surviving sensors) and 1.4% 
 <!-- END:stability -->
 
 ![top-5 stability by ranker, under both perturbation schemes](assets/fig_stability.png)
+
+## Synthetic benchmark — the only place with ground truth
 
 <!-- BEGIN:synthetic -->
 SECOM ships no causal labels, so recovery cannot be scored on it at all. Here it can: 5 of 200 sensors genuinely drive the label, over 1500 wafers at a 7% fail rate with 4% missing cells and block-correlated noise (blocks of 20) so raw correlation alone cannot find the causal set. Averaged over 10 independently generated datasets:
@@ -264,6 +278,8 @@ One number in the table deserves its own sentence: the loop's *selected set* has
 
 **These numbers are synthetic and must never be quoted as real-data results.**
 <!-- END:synthetic -->
+
+![where the agent loop helps and where it hurts](assets/fig_premise.png)
 
 ## What to actually do with this
 

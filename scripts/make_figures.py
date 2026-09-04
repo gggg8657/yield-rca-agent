@@ -9,6 +9,7 @@ Four figures, each one answering a question the tables answer more precisely:
 * ``fig_stability.png``  -- how far is top-5 stability from the KPI?
 * ``fig_protocol.png``   -- how much of the AUC survives a chronological split?
 * ``fig_drift.png``      -- is the process stationary at all?
+* ``fig_premise.png``    -- where does the agent loop help, and where does it hurt?
 
 Every value plotted is read from the run JSONs, so the figures cannot drift
 from the tables. Categorical colours are the first three slots of the
@@ -269,6 +270,63 @@ def fig_protocol(ev, out):
     return out
 
 
+def fig_premise(ev, sy, st, out):
+    """The sign flip: the loop helps where its premise holds, hurts where it does not.
+
+    Two panels, each with its own single axis -- a paired AUC delta and a
+    stability score are different quantities and are never put on one scale.
+    """
+    d_real = ev["auc"]["paired"]["agent_rf__vs__rf_all"]
+    d_syn = sy["auc"]["paired"]["agent_rf__vs__rf_all"]
+    fig, (axl, axr) = plt.subplots(1, 2, figsize=(8.4, 3.0))
+
+    labels = ["SECOM\n(real, diffuse signal)",
+              "synthetic\n(5 planted causes)"]
+    colors = ["#2a78d6", "#eb6834"]
+
+    _grid(axl, axis="x")
+    for i, (d, c) in enumerate(zip([d_real, d_syn], colors)):
+        axl.barh(i, d["mean"], height=0.5, color=c, zorder=3,
+                 edgecolor=SURFACE, linewidth=1.2)
+        axl.errorbar(d["mean"], i,
+                     xerr=[[d["mean"] - d["ci_lo"]], [d["ci_hi"] - d["mean"]]],
+                     fmt="none", ecolor=INK_2, elinewidth=1.5, capsize=3,
+                     capthick=1.5, zorder=5)
+        ha = "left" if d["mean"] > 0 else "right"
+        off = 0.004 if d["mean"] > 0 else -0.004
+        axl.text(d["ci_hi"] + off if d["mean"] > 0 else d["ci_lo"] + off, i,
+                 f"{d['mean']:+.3f}", va="center", ha=ha, fontsize=8.5,
+                 color=INK)
+    axl.axvline(0, color=INK_MUTED, linewidth=1.1, zorder=4)
+    axl.set_yticks([0, 1], labels, fontsize=8.5)
+    axl.set_ylim(-0.6, 1.6)
+    axl.set_xlabel("paired AUC: agent loop minus full-sensor forest")
+    axl.set_title("Accuracy: the sign flips", fontsize=10, loc="left", pad=8)
+
+    _grid(axr, axis="x")
+    vals = [st["rankers"]["agent"]["bootstrap"]["raw"]["pairwise_overlap"],
+            sy["stability"]["agent"]["raw"]["pairwise_overlap"]]
+    for i, (v, c) in enumerate(zip(vals, colors)):
+        axr.barh(i, v, height=0.5, color=c, zorder=3, edgecolor=SURFACE,
+                 linewidth=1.2)
+        axr.text(v + 0.012, i, f"{100*v:.1f}%", va="center", ha="left",
+                 fontsize=8.5, color=INK)
+    axr.axvline(KPI_STAB, color=INK_MUTED, linestyle=(0, (4, 3)),
+                linewidth=1.2, zorder=4)
+    axr.text(KPI_STAB + 0.01, 1.42, f"KPI {KPI_STAB:.0%}", fontsize=8,
+             color=INK_2, va="center", ha="left")
+    axr.set_yticks([0, 1], ["", ""])
+    axr.set_ylim(-0.6, 1.6)
+    axr.set_xlim(0, 1.05)
+    axr.set_xlabel("top-5 stability (mean pairwise overlap, bootstrap)")
+    axr.set_title("Stability: same story", fontsize=10, loc="left", pad=8)
+
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def fig_drift(dr, out):
     """Fail rate per time block -- the label half of the drift diagnosis."""
     blocks = dr["label_drift"]["per_block"]
@@ -327,6 +385,9 @@ def main():
     dr = read(runs / "drift.json")
     if dr:
         made.append(fig_drift(dr, out / "fig_drift.png"))
+    sy = read(runs / "synthetic.json")
+    if ev and sy and st and "agent" in st.get("rankers", {}):
+        made.append(fig_premise(ev, sy, st, out / "fig_premise.png"))
     for m in made:
         print(f"wrote {m}")
     if not made:
