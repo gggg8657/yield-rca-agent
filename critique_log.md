@@ -1,0 +1,278 @@
+# Critique log — S2, yield root-cause copilot
+
+Running record of what was measured, what it was measured against, and where the
+explanation could be wrong. Numbers cited here are read out of `runs/*.json` by
+`scripts/report.py`; where a number appears in prose it is because a run in this
+repository produced it and the JSON is named next to it.
+
+Conventions used throughout:
+
+* **synthetic** = the generator in `yieldrca.data.make_synthetic`, which has
+  ground-truth causal sensors. **real** = UCI SECOM, which has none. A claim
+  about recovering causes can only ever be synthetic.
+* A metric nobody ran is written `[not measured]`.
+
+---
+
+## Turn 1 (2026-09-04) — audit before measurement
+
+### What the previous session left
+
+`DONE_OVERNIGHT.md` reports a complete SECOM evaluation. I re-ran
+`scripts/report.py --check`: **"report is in sync with runs/*.json"**, so the
+documents and the JSONs agree and I am not auditing stale prose.
+
+Headline as inherited, all from `runs/secom_eval.json` and
+`runs/secom_stability.json`:
+
+| KPI | arm | value | target | verdict |
+|---|---|---|---|---|
+| SECOM AUC | `rf_all` (plain forest) | 0.759 [0.739, 0.779] | ≥0.75 | met |
+| SECOM AUC | `agent_rf` (the agent loop) | 0.717 [0.699, 0.735] | ≥0.75 | **not met** |
+| top-5 stability | `agent_rf`, 200 bootstraps | 22.3% | ≥80% | **not met** |
+
+The agent loop loses to a plain random forest by −0.042 [−0.059, −0.025] over 25
+paired folds. That is the finding, and the README already leads with it rather
+than burying it — checked, `README.md` states it in the first results table.
+
+### Leak audit (the brief asked for two specific culprits, explicitly)
+
+Published SECOM AUCs cluster in 0.70–0.80, so 0.759 is inside the plausible band
+rather than above it — which is weak evidence of no leak, not proof. I checked
+the two named mechanisms directly:
+
+1. **Timestamp used as a feature.** *Not present.* `yieldrca/data.py:50` builds
+   `X` from `secom.data` alone; the timestamp lives in the *label* file and is
+   only returned when a caller passes `with_time=True`. Every caller of that
+   flag (`prepare_data.py:44`, `eval_secom.py:66`, `drift.py:66`,
+   `rolling_sweep.py:64`) binds it to a separate `t` and uses it only to build
+   splits. `grep` for `hstack`/`column_stack` across `scripts/` and `yieldrca/`
+   returns three hits, none of which touch `t`
+   (`preprocess.py:123` appends missing-indicators, `estimator.py:255,335`
+   assemble a two-column probability). `X.shape == (1567, 590)` at load, i.e.
+   exactly the sensor count with no extra column.
+
+2. **Imputation or scaling fitted outside the fold.** *Not present.* Every
+   imputer and scaler is a step inside a `Pipeline` (`arms.py:60-105`) or inside
+   `AgentRCA.fit` (`estimator.py:191`), so `cross_validate` fits them on
+   training rows only. The one documented exception is the correlation-cluster
+   map used for the cluster-aware stability variant
+   (`yieldrca/stability.py:53`), which is built from the **unlabelled** sensor
+   matrix and never used to predict — it cannot move an AUC.
+
+   `tests/test_real.py::test_permuted_labels_score_at_chance` already enforces
+   this end-to-end: shuffle the labels, run the full CV, assert every arm sits
+   near 0.5.
+
+**Conclusion: I found no leak of either named kind.** I am not claiming the
+pipeline is leak-free in general; I am claiming the two mechanisms that would
+explain an inflated SECOM AUC are absent, and that the AUC is not inflated
+anyway.
+
+### The gap the audit found instead
+
+The permuted-label test asserts the *predictor* scores at chance under a null.
+It says nothing about what the *reporter* does. Those are different failure
+modes, and only the second is what this project sells:
+
+> a suspect that fails the bootstrap stability check is dropped
+
+That is a rhetorical claim. Nothing in the repo measures it. And reading
+`estimator.py:199-204` and `estimator.py:236-237`, the loop contains two
+never-return-empty-handed fallbacks:
+
+```python
+if not suspects:                      # 199
+    suspects = [int(j) for j in order[: max(self.top_k, 1)]]
+...
+surv = [j for j in reps if self.stability_[j] >= self.stability_min]
+if not surv:                          # 236
+    surv = reps[: min(5, len(reps))]
+```
+
+So **the drop step cannot return an empty report.** If that is the binding
+behaviour, the false-discovery rate under a no-causal-sensor null is 1.0 by
+construction, and the "verify-and-drop" mechanism is decoration. That is a
+prediction about the architecture, and it is testable.
+
+### Hypothesis for this turn
+
+> **H1.** Under a label-permutation null, where no sensor carries information
+> about failure, the agent loop still reports root causes on essentially every
+> replicate, and the bootstrap support of those invented suspects overlaps the
+> support of the suspects it reports on the real labels.
+
+**What would distinguish this from the obvious alternative.** The obvious
+alternative is "the loop abstains on noise, and the real-label suspects have
+visibly higher bootstrap support" — i.e. the mechanism works. H1 and that
+alternative make opposite, quantitative predictions about two statistics:
+the abstention rate on the null (H1: ~0; alternative: high) and
+P(real replicate's max support > null replicate's max support) (H1: ~0.5;
+alternative: ~1). Measuring both settles it, and neither can be argued into.
+
+A single real-label fit at the pre-registered operating point selects 21 sensors
+from 64 candidates with a maximum bootstrap support of 0.833 (timing run, this
+session, 107 s single-threaded). If the null produces the same shape, the number
+0.833 means nothing.
+
+**Run:** `scripts/null_fdr.py`, 200 permuted replicates + 40 real-label
+replicates, output `runs/null_fdr.json`.
+
+---
+
+## Turn 2 (2026-09-04) — the invariance screen, and a null I got wrong first
+
+### Result
+
+`scripts/invariance.py` → `runs/invariance.json`. 474 surviving sensors, 5
+contiguous time blocks carrying 44 / 21 / 11 / 11 / 17 failed wafers.
+
+| quantity | value |
+|---|---|
+| sensors with any association with failure (BH FDR 0.05, exact permutation B = 20,000) | **22** of 474 |
+| of those, non-invariant across production periods (BH 0.05, B = 20,000) | **1** |
+| of those, associated and not shown to break | **21** |
+| sensors the agent loop selects in ≥1 of 25 folds | 119 |
+| ...of which are marginally associated | 21 — i.e. 21 of the 22 associated sensors in the whole matrix |
+
+### The finding that matters
+
+**The one sensor the screen rejects is the loop's single most confident
+suspect.** `sensor_059` is in the reported top-5 in **25 of 25** CV folds. Its
+per-period AUCs are 0.56 / 0.77 / 0.86 / 0.52 / 0.49 — a strong association in
+the middle of the record and none at the end — with I² = 0.82, meaning 82% of
+the variance in its association is *between* periods rather than within them.
+BH-adjusted permutation p = 0.012.
+
+The other 21 "pass". They did not pass an invariance test; they were not
+testable. This is the part that needs stating precisely, because the flattering
+misreading is right there:
+
+* The power audit injects sensors with a *known* break (association 0.5 + δ in
+  block 0, 0.5 elsewhere) and runs the identical test. Detection: 14% at a
+  first-period AUC of 0.55, 23% at 0.60, 52% at 0.65, 79% at 0.70, 95% at 0.75
+  (unadjusted α = 0.05; at the strictest level BH could have demanded, 2% / 4% /
+  12% / 35% / 61%).
+* SECOM's associated sensors have |AUC − 0.5| of 0.088 to 0.192, median 0.114.
+  Their *entire* signal is smaller than the break the test needs to see.
+* `sensor_059` is the strongest association in the matrix (|AUC − 0.5| = 0.192)
+  — which is exactly why it is the one the test could convict.
+
+So power rises with association strength, the sensors the test can judge are the
+ones the loop is most confident about, and the single judgeable one failed.
+That is a much less comfortable reading than "21 of 22 suspects are invariant",
+and it is the correct one.
+
+### What would distinguish this from the obvious alternative
+
+The obvious alternative is "`sensor_059` is a real cause and the middle-period
+spike is noise". Two things argue against it and one would settle it:
+
+* I² = 0.82 with a BH-adjusted permutation p of 0.012 is not a noise-level
+  fluctuation, and the permutation reference is exact, so this does not lean on
+  an approximation that ties could break.
+* The direction is consistent with `runs/drift.json`: the sensors separate
+  production era at adversarial AUC 0.9926, so a sensor tracking era rather than
+  failure is the *expected* artifact on this dataset, not an exotic one.
+* What would settle it is per-period data with more failures — 11 fails in
+  blocks 2 and 3 is where the power went. That is not obtainable from SECOM.
+
+### The null I got wrong first, and both numbers
+
+I ran this test twice and the two runs disagree materially. Recording both,
+because the first one is the mistake a reader would make:
+
+| version | invariance null | non-invariant sensors found |
+|---|---|---|
+| first (superseded) | permute **labels** | 42 of 474 |
+| current | permute **block membership** | 1 of 22 associated |
+
+Permuting labels builds the reference distribution at AUC 0.5, where rank AUC
+has smaller sampling variance than at the observed association. Against that
+too-tight reference, a strongly-associated sensor looks heterogeneous *because
+it is strong*. The correct null for "the association is the same in every
+period" holds each sensor's pooled association fixed and destroys only the block
+structure — so rows are reshuffled into same-sized blocks. The superseded
+`runs/invariance.json` was deleted rather than kept, since a JSON carrying
+numbers from a wrong protocol is exactly the hazard these rules exist for.
+
+`tests/test_null.py::test_block_permutation_null_detects_a_break_it_should_detect`
+now pins the direction of the corrected test: a sensor associated only inside
+block 0 must come back with p < 0.01, an untouched sensor with p > 0.05. Without
+that test the fix would be unverified.
+
+### A second method note, also a correction
+
+The closed-form χ² reference for Cochran's Q is **anticonservative on this
+data**: under the null it rejects at 0.061 against a nominal 0.050 (and at 0.090
+in the first, mis-specified version). SECOM's sensors are heavily quantised, and
+ties break the Hanley-McNeil variance approximation the statistic is built on.
+Every decision now uses a permutation p-value; the χ² figure is retained in the
+JSON as a diagnostic and labelled as one. The vectorised rank AUC that makes
+20,000 permutations affordable is checked against scikit-learn on tie-heavy,
+missing-heavy input in `tests/test_null.py` — a fast statistic that quietly
+disagrees with the slow one would have corrupted every p-value built on it.
+
+### Verdict on brief point 4
+
+The pipeline reports **associational** suspects. The data cannot support
+upgrading that: the only suspect strong enough to test failed, and the rest are
+below the screen's detection floor. Being explicit is the outcome, and it is now
+generated into `RESULTS.md` and the README from the JSON rather than asserted.
+
+---
+
+## Turn 2b — second opinions
+
+### codex (`codex exec`, full output in this session's log)
+
+Asked for the strongest specific reason the numbers or the verify-and-drop claim
+might be wrong. It found, unprompted, the same architectural flaw I had just
+written H1 about:
+
+> **The loop does not reliably drop unstable suspects.** After applying
+> `stability_min`, if no suspect survives, it deliberately restores the top five
+> anyway: `surv = reps[: min(5, len(reps))]` (estimator.py:234). Those restored
+> suspects may have stability below the threshold—or zero. […] "Drops unstable
+> suspects" is therefore false exactly when verification rejects everything, the
+> situation where withholding a root-cause report matters most.
+
+Independent confirmation from a critic that had not seen my hypothesis. Kept,
+and it is the thing `runs/null_fdr.json` quantifies.
+
+Its second point is a fair reframing I had not stated sharply enough:
+
+> **The 0.759 AUC is temporally leaked for the deployment question.** It comes
+> from shuffled repeated stratified CV […] so training folds contain wafers
+> produced after wafers in their corresponding test folds. […] Thus 0.759 may
+> avoid ordinary preprocessing/label leakage, but calling it simply "leak-free"
+> is overstated: it leaks future process regimes into training and estimates
+> retrospective interpolation, not prospective wafer prediction. Even under its
+> chosen protocol, "KPI met" rests only on the mean; its reported interval is
+> [0.739, 0.779], crossing the 0.75 target.
+
+**Assessment: correct, and not fully fixed.** The repo does report the
+chronological (0.532) and rolling-origin numbers prominently, so nothing is
+hidden — but the KPI card scores "met" against the shuffled-CV mean while its
+own CI crosses the target line. The card already says the CI spans the line; it
+does not say that the protocol behind the point estimate is the optimistic one.
+This is a definition question the owner has to answer, and it is written up as
+decision 1 in `WEEKEND.md` rather than resolved unilaterally.
+
+### cursor-agent — unavailable
+
+`Error: Authentication required. Please run 'agent login' first, or set
+CURSOR_API_KEY environment variable.` Not resolvable unattended; no credentials
+are mine to create. Skipped.
+
+### agy — unavailable in headless mode
+
+Three attempts. `agy "…"` rejects a positional prompt; `agy -p` with the prompt
+on stdin rejects stdin; `agy -p "<prompt>"` with the source pasted inline gets
+as far as running and then reports
+`no output produced — a tool required the "command" permission that headless
+mode cannot prompt for, so it was auto-denied`, suggesting
+`--dangerously-skip-permissions`. **Declined deliberately:** that flag would let
+another agent write inside this repository unsupervised while two of my own jobs
+were running in it, and a second opinion is not worth that. Noted and routed
+around, per the environment rule.

@@ -1095,6 +1095,270 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None):
     return ["## Headline", ""] + L + [""]
 
 
+def sec_null_fdr(nf):
+    """Hallucination control, as a measured false-discovery rate."""
+    if not nf:
+        return []
+    n, r = nf["null"], nf["real"]
+    sep = nf["separation"]
+    fd = nf["null_fdr"]
+    pr = nf["protocol"]
+    rows = [
+        ["sensors reported as root causes, per replicate",
+         f"{n['n_reported_mean']:.1f}", f"{r['n_reported_mean']:.1f}",
+         "mean over replicates"],
+        ["...of which cleared the stability threshold on merit",
+         f"{n['n_merit_mean']:.1f}", f"{r['n_merit_mean']:.1f}",
+         f"threshold pi = {pr['agent_cfg']['stability_min']}"],
+        ["replicates reporting nothing at all (abstention)",
+         pct(n["abstention_rate"]), pct(r["abstention_rate"]),
+         "the only outcome that would be correct on the null"],
+        ["replicates where the never-empty fallback fired",
+         pct(n["fallback_rate"]), pct(r["fallback_rate"]),
+         "`estimator.py`: `if not surv: surv = reps[:5]`"],
+        ["largest bootstrap support any suspect reached",
+         f"{n['max_stability_mean']:.3f}", f"{r['max_stability_mean']:.3f}",
+         "mean; the statistic the drop step thresholds"],
+        ["...its 5th-95th percentile across replicates",
+         f"[{n['max_stability_q05']:.3f}, {n['max_stability_q95']:.3f}]",
+         f"[{r['max_stability_q05']:.3f}, {r['max_stability_q95']:.3f}]",
+         "overlap here means the score cannot separate the two worlds"],
+    ]
+    verdict_word = ("**never**" if n["abstention_rate"] == 0 else
+                    f"in {pct(n['abstention_rate'])} of replicates")
+    sep_p = sep["prob_real_max_exceeds_null_max"]
+    if sep_p >= 0.95:
+        sep_read = ("so the score does separate the two worlds, and a "
+                    "null-calibrated threshold is a usable filter")
+    elif sep_p >= 0.75:
+        sep_read = ("so the score carries some information about whether the "
+                    "labels were real, but not enough to filter on per-sensor")
+    else:
+        sep_read = ("so the score carries essentially no information about "
+                    "whether the labels were real")
+    body = [
+        "## Does the loop invent root causes when there are none?", "",
+        "The pitch is that a suspect failing the bootstrap stability check is "
+        "dropped, so what survives is trustworthy. That is a claim about a "
+        "false-discovery rate, and it is measurable: build a world with no "
+        "causal sensors and count what the loop reports anyway.", "",
+        f"**The null.** {pr['null']} "
+        f"{pr['n_null']} such replicates, against {pr['n_real']} replicates of "
+        f"the identical loop on the true labels ({pr['real_arm']}). "
+        f"From `scripts/null_fdr.py`, written to `runs/null_fdr.json`.", "",
+        table(rows, ["quantity", "permuted labels (no causes exist)",
+                     "real labels", "note"]), "",
+        f"**The loop abstains {verdict_word}.** Over {pr['n_null']} "
+        f"permuted-label replicates it named "
+        f"{fd['false_discoveries_total']} sensors as root causes. Every one of "
+        f"them is a false discovery by construction, so the false-discovery "
+        f"rate of the reported suspect list under this null is "
+        f"**{fd['fdr_given_nonempty']:.0%}**.", "",
+        f"That number is not a tuning failure, it is the architecture: "
+        f"`AgentRCA.fit` cannot return an empty report. If no suspect clears "
+        f"the threshold it restores the top five anyway "
+        f"(`estimator.py`, `if not surv: surv = reps[:5]`), and the "
+        f"candidate-selection step above it has the same guard. On the null "
+        f"the guard is mostly not even needed: "
+        f"{n['n_merit_mean']:.1f} sensors clear the threshold on merit, "
+        f"because with {pr['agent_cfg']['n_boot']} bootstrap replicates a "
+        f"pure-noise sensor that happens to rank highly once will do so again.",
+        "",
+        f"**Is the loop at least *more* confident on real data?** "
+        f"P(real replicate's best support > null replicate's best support) = "
+        f"**{sep_p:.3f}**, where 0.5 is no information "
+        f"(Mann-Whitney p = {sep['p_real_greater']:.3g}), {sep_read}.", "",
+    ]
+    cl = nf.get("real_cleared") or {}
+    if cl:
+        crows = []
+        for key in sorted(cl, key=lambda k: -float(k.split("_")[1])):
+            c = cl[key]
+            crows.append([
+                f"alpha = {key.split('_')[1]}", f"{c['tau']:.3f}",
+                f"{c['n_cleared_mean']:.2f}",
+                pct(c["replicates_with_none"]),
+            ])
+        body += [
+            "**What survives a null-calibrated threshold.** Taking "
+            "tau(alpha) as the (1-alpha) quantile of the null's best support "
+            "-- Westfall-Young max-statistic control, family-wise over the "
+            "sensors screened in a replicate -- and asking how many real-label "
+            "suspects clear it:", "",
+            table(crows, ["level", "tau", "real suspects clearing tau (mean)",
+                          "replicates clearing none"]), "",
+            "This is the honest version of the suspect list, and it is much "
+            "shorter than the one the loop prints today. It is also a "
+            "one-line change to enforce, and it gives the pipeline something "
+            "it currently lacks: the ability to say *nothing here is above "
+            "noise*.", "",
+        ]
+    return body
+
+
+def sec_invariance(iv):
+    """Whether the reported suspects are associational or something stronger."""
+    if not iv:
+        return []
+    tot = iv["totals"]
+    pr = iv["protocol"]
+    blocks = iv["blocks"]
+    brow = " / ".join(f"{b['n_fail']}" for b in blocks)
+    grows = []
+    for g in iv["groups"]:
+        if not g.get("n"):
+            continue
+        grows.append([
+            g["label"], str(g["n"]), str(g["n_associated"]),
+            str(g["n_non_invariant"]), str(g["n_invariant"]),
+        ])
+    body = [
+        "## Are the suspects causal, or only associated?", "",
+        "Permutation importance is not a causal quantity: it measures how much "
+        "a model leans on a column. The weakest claim with an actual "
+        "identification argument behind it is invariance -- if a sensor really "
+        "drives failure, its relationship with failure should survive a change "
+        "of production period, and `runs/drift.json` already shows these "
+        "periods are genuinely different environments. This is the marginal "
+        "screen from Invariant Causal Prediction (Peters, Buhlmann & "
+        "Meinshausen, JRSS-B 2016): a **necessary** condition for a stable "
+        "cause, not a sufficient one. From `scripts/invariance.py`, written to "
+        "`runs/invariance.json`.", "",
+        f"Environments: {pr['environments']}, carrying {brow} failed wafers "
+        f"respectively. Two stages with two different nulls, because "
+        f"conflating them is the easy mistake -- association is tested by "
+        f"permuting the labels, invariance by permuting which wafers belong to "
+        f"which period, so that each sensor's overall association is held "
+        f"fixed and only the block structure is destroyed.", "",
+        table(grows, ["group", "n", "associated", "non-invariant",
+                      "associated AND invariant"]), "",
+        f"Of {tot['n_sensors']} surviving sensors, "
+        f"**{tot['n_associated']}** show any association with failure at all "
+        f"(BH, FDR {pr['alpha']}), and of those "
+        f"**{tot['n_non_invariant']}** "
+        + ("is" if tot["n_non_invariant"] == 1 else "are")
+        + f" non-invariant across periods, leaving "
+          f"**{tot['n_invariant']}** that are both associated and not shown to "
+          f"break.", "",
+    ]
+    # The sharp finding goes before the power table that qualifies it: which
+    # sensors failed, and why a failure carries more weight than a pass.
+    broke = [r for r in iv.get("per_sensor", []) if r.get("associated")
+             and not r.get("invariant")]
+    kept = [r for r in iv.get("per_sensor", []) if r.get("associated")
+            and r.get("invariant")]
+    if broke:
+        brows = []
+        for r in sorted(broke, key=lambda r: -r["folds_selected"]):
+            ba = " / ".join("--" if v is None else f"{v:.2f}"
+                            for v in r["block_auc"])
+            brows.append([f"`{r['name']}`", str(r["folds_selected"]),
+                          str(r["folds_top5"]), f"{r['pooled_auc']:.3f}",
+                          ba, f"{r['i2']:.2f}" if r["i2"] is not None else "--",
+                          f"{r['invariance_p_bh']:.3f}"])
+        body += [
+            "**The sensor the screen rejects is the loop's favourite.**", "",
+            table(brows, ["sensor", "folds selected", "folds in top-5",
+                          "pooled AUC", "AUC per period", "I²", "p (BH)"]), "",
+        ]
+        top = max(broke, key=lambda r: r["folds_top5"])
+        n_folds_total = max((r["folds_selected"] for r in iv["per_sensor"]),
+                            default=0)
+        if top["folds_top5"] >= 0.8 * max(n_folds_total, 1):
+            body += [
+                f"`{top['name']}` is in the agent loop's reported top-5 in "
+                f"{top['folds_top5']} of {n_folds_total} cross-validation "
+                f"folds -- its single most reproducible suspect -- and it is "
+                f"the one associated sensor whose relationship with failure "
+                f"demonstrably does not hold across production periods. "
+                f"{int(round(100 * top['i2']))}% of the variance in its "
+                f"per-period association is between periods rather than "
+                f"within them.", "",
+            ]
+
+    pw = iv.get("power") or {}
+    ladder = pw.get("ladder") or []
+    if ladder:
+        prows = [[f"{row['target_block0_auc']:.2f}",
+                  pct(row["power_at_alpha"], 0),
+                  pct(row["power_at_alpha_over_family"], 0)] for row in ladder]
+        # smallest injected break the test detects at least half the time
+        detect = [row for row in ladder if row["power_at_alpha"] >= 0.5]
+        floor_txt = (f"about {detect[0]['target_block0_auc']:.2f}"
+                     if detect else
+                     f"more than {ladder[-1]['target_block0_auc']:.2f}")
+        body += [
+            "**A null result is only evidence if the test had power**, and "
+            "this one is asked to detect a broken association from as few as "
+            f"{min(b['n_fail'] for b in blocks)} failures in a block. So "
+            "sensors were built with a known break -- association "
+            "0.5 + delta in the first period, 0.5 in every other -- and put "
+            "through the identical test:", "",
+            table(prows, ["injected first-period AUC", "detected at p<0.05",
+                          f"detected at p<0.05/{pw['n_family']}"]), "",
+            f"The test needs a first-period AUC of {floor_txt} before it "
+            f"finds the break half the time, and SECOM's associated sensors do "
+            f"not have that much *total* signal. So the honest reading of the "
+            f"table above is **not** \"the suspects are invariant, therefore "
+            f"causal\" -- it is \"no break large enough for this dataset to "
+            f"see\". The invariance screen cannot adjudicate causality on "
+            f"SECOM at {int(sum(b['n_fail'] for b in blocks))} failures, and "
+            f"saying so is the result.", "",
+        ]
+    if broke:
+        top = max(broke, key=lambda r: r["folds_top5"])
+        if kept:
+            k_strength = sorted(abs(r["pooled_auc"] - 0.5) for r in kept)
+            b_strength = abs(top["pooled_auc"] - 0.5)
+            body += [
+                f"That ordering is not a coincidence, and it is the reason a "
+                f"rejection here means more than a pass. This test's power "
+                f"rises with how strongly a sensor is associated, so the "
+                f"sensors it is able to judge are exactly the ones the loop is "
+                f"most confident about. `{top['name']}` is the strongest "
+                f"association in the matrix (|AUC-0.5| = {b_strength:.3f}); "
+                f"the {len(kept)} sensors that \"pass\" have a median of "
+                f"{k_strength[len(k_strength)//2]:.3f}, below the level at "
+                f"which the power table above shows the test can see anything "
+                f"at all. **They did not pass an invariance test. They were "
+                f"not testable.**", "",
+            ]
+    if ladder:
+        body += [
+            "**Therefore the pipeline reports associational suspects, and the "
+            "repo says so wherever it names them.** Upgrading that to a causal "
+            "claim needs either more failed wafers, or interventional data, or "
+            "environments that differ more sharply than 90 days of one fab's "
+            "history -- not a better attribution statistic.", "",
+        ]
+
+    ov = tot.get("n_loop_selected_and_associated")
+    if ov is not None and tot["n_associated"]:
+        body += [
+            f"One side-observation with teeth: of the "
+            f"{tot['n_ever_selected_by_loop']} sensors the agent loop selects "
+            f"in at least one fold, {ov} are marginally associated -- and that "
+            f"is {ov} of the {tot['n_associated']} associated sensors in the "
+            f"whole matrix. The loop's candidate pool is essentially the "
+            f"univariate screen plus "
+            f"{tot['n_ever_selected_by_loop'] - ov} sensors with no detectable "
+            f"marginal signal, which is the same conclusion the AUC and "
+            f"stability tables reach from their own directions.", "",
+        ]
+    cal = iv.get("chi2_calibration") or {}
+    if cal.get("chi2_rejection_rate_under_null") is not None:
+        body += [
+            f"*Method note.* The closed-form chi-square reference for "
+            f"Cochran's Q is anticonservative on this data -- under the null "
+            f"it rejects at {cal['chi2_rejection_rate_under_null']:.3f} "
+            f"against a nominal {cal['nominal']:.3f}, because SECOM's sensors "
+            f"carry heavy ties. Every decision above therefore uses the "
+            f"permutation p-value instead; the chi-square figure is kept in "
+            f"the JSON as a diagnostic only.", "",
+        ]
+    return body
+
+
 def sec_kpi(ev, st, prof):
     if not (ev and st and "agent" in st.get("rankers", {})):
         return []
@@ -1180,6 +1444,8 @@ def build(runs: Path):
               "workers.", ""]
     dr = read_json(runs / "drift.json")
     rsw = read_json(runs / "rolling_sweep.json")
+    nf = read_json(runs / "null_fdr.json")
+    iv = read_json(runs / "invariance.json")
     L += sec_headline(ev, st, sy, sw, prof, dr, rsw)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
@@ -1189,6 +1455,8 @@ def build(runs: Path):
     L += sec_rolling_sweep(rsw, ev)
     L += sec_sweep(sw)
     L += sec_stability(st, prof)
+    L += sec_null_fdr(nf)
+    L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
     L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
@@ -1241,6 +1509,8 @@ README_BLOCKS = {
     "drift": lambda d: "\n".join(sec_drift(d["dr"])[2:]).strip(),
     "rolling_sweep": lambda d: "\n".join(
         sec_rolling_sweep(d["rs"], d["ev"])[2:]).strip(),
+    "null_fdr": lambda d: "\n".join(sec_null_fdr(d["nf"])[2:]).strip(),
+    "invariance": lambda d: "\n".join(sec_invariance(d["iv"])[2:]).strip(),
 }
 
 
@@ -1253,6 +1523,8 @@ def inject(readme: str, runs: Path) -> str:
         "sy": read_json(runs / "synthetic.json"),
         "dr": read_json(runs / "drift.json"),
         "rs": read_json(runs / "rolling_sweep.json"),
+        "nf": read_json(runs / "null_fdr.json"),
+        "iv": read_json(runs / "invariance.json"),
     }
     for key, fn in README_BLOCKS.items():
         pat = re.compile(

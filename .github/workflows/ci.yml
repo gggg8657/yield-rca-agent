@@ -28,5 +28,7 @@ jobs:
       - run: pip install -r requirements-full.txt
       - name: real-data path (incl. the label-permutation leak canary)
         run: PYTHONPATH=. python tests/test_real.py
+      - name: report-side statistics + the hallucination property
+        run: PYTHONPATH=. python tests/test_null.py
       - name: RESULTS.md and the README blocks match runs/*.json
         run: python scripts/report.py --check

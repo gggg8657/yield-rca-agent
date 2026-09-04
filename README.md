@@ -284,6 +284,58 @@ The second gap is the one no ranker closes. Even `univariate`, the most stable t
 
 ![top-5 stability by ranker, under both perturbation schemes](assets/fig_stability.png)
 
+## Does the loop invent root causes when there are none?
+
+<!-- BEGIN:null_fdr -->
+
+<!-- END:null_fdr -->
+
+## Are the suspects causal, or only associated?
+
+<!-- BEGIN:invariance -->
+Permutation importance is not a causal quantity: it measures how much a model leans on a column. The weakest claim with an actual identification argument behind it is invariance -- if a sensor really drives failure, its relationship with failure should survive a change of production period, and `runs/drift.json` already shows these periods are genuinely different environments. This is the marginal screen from Invariant Causal Prediction (Peters, Buhlmann & Meinshausen, JRSS-B 2016): a **necessary** condition for a stable cause, not a sufficient one. From `scripts/invariance.py`, written to `runs/invariance.json`.
+
+Environments: 5 contiguous equal-count time blocks in timestamp order, carrying 44 / 21 / 11 / 11 / 17 failed wafers respectively. Two stages with two different nulls, because conflating them is the easy mistake -- association is tested by permuting the labels, invariance by permuting which wafers belong to which period, so that each sensor's overall association is held fixed and only the block structure is destroyed.
+
+| group | n | associated | non-invariant | associated AND invariant |
+|---|---|---|---|---|
+| agent loop, consensus top-5 | 5 | 4 | 1 | 3 |
+| agent loop, selected in >=50% of 25 folds | 8 | 5 | 1 | 4 |
+| agent loop, selected in >=1 of 25 folds | 119 | 21 | 1 | 20 |
+| associated but never selected by the loop | 1 | 1 | 0 | 1 |
+| all surviving sensors | 474 | 22 | 1 | 21 |
+
+Of 474 surviving sensors, **22** show any association with failure at all (BH, FDR 0.05), and of those **1** is non-invariant across periods, leaving **21** that are both associated and not shown to break.
+
+**The sensor the screen rejects is the loop's favourite.**
+
+| sensor | folds selected | folds in top-5 | pooled AUC | AUC per period | I² | p (BH) |
+|---|---|---|---|---|---|---|
+| `sensor_059` | 25 | 25 | 0.692 | 0.56 / 0.77 / 0.86 / 0.52 / 0.49 | 0.82 | 0.012 |
+
+`sensor_059` is in the agent loop's reported top-5 in 25 of 25 cross-validation folds -- its single most reproducible suspect -- and it is the one associated sensor whose relationship with failure demonstrably does not hold across production periods. 82% of the variance in its per-period association is between periods rather than within them.
+
+**A null result is only evidence if the test had power**, and this one is asked to detect a broken association from as few as 11 failures in a block. So sensors were built with a known break -- association 0.5 + delta in the first period, 0.5 in every other -- and put through the identical test:
+
+| injected first-period AUC | detected at p<0.05 | detected at p<0.05/22 |
+|---|---|---|
+| 0.55 | 14% | 2% |
+| 0.60 | 23% | 4% |
+| 0.65 | 52% | 12% |
+| 0.70 | 79% | 35% |
+| 0.75 | 95% | 61% |
+
+The test needs a first-period AUC of about 0.65 before it finds the break half the time, and SECOM's associated sensors do not have that much *total* signal. So the honest reading of the table above is **not** "the suspects are invariant, therefore causal" -- it is "no break large enough for this dataset to see". The invariance screen cannot adjudicate causality on SECOM at 104 failures, and saying so is the result.
+
+That ordering is not a coincidence, and it is the reason a rejection here means more than a pass. This test's power rises with how strongly a sensor is associated, so the sensors it is able to judge are exactly the ones the loop is most confident about. `sensor_059` is the strongest association in the matrix (|AUC-0.5| = 0.192); the 21 sensors that "pass" have a median of 0.111, below the level at which the power table above shows the test can see anything at all. **They did not pass an invariance test. They were not testable.**
+
+**Therefore the pipeline reports associational suspects, and the repo says so wherever it names them.** Upgrading that to a causal claim needs either more failed wafers, or interventional data, or environments that differ more sharply than 90 days of one fab's history -- not a better attribution statistic.
+
+One side-observation with teeth: of the 119 sensors the agent loop selects in at least one fold, 21 are marginally associated -- and that is 21 of the 22 associated sensors in the whole matrix. The loop's candidate pool is essentially the univariate screen plus 98 sensors with no detectable marginal signal, which is the same conclusion the AUC and stability tables reach from their own directions.
+
+*Method note.* The closed-form chi-square reference for Cochran's Q is anticonservative on this data -- under the null it rejects at 0.061 against a nominal 0.050, because SECOM's sensors carry heavy ties. Every decision above therefore uses the permutation p-value instead; the chi-square figure is kept in the JSON as a diagnostic only.
+<!-- END:invariance -->
+
 ## Synthetic benchmark — the only place with ground truth
 
 <!-- BEGIN:synthetic -->
