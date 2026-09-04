@@ -175,7 +175,7 @@ computed from the *pre-drop* supports and never reads it. The last row above is
 switched off by configuration — that row cannot be anything else, and I should
 not have read it as a finding.
 
-### 6. The one config field that is worth 13 points — and the architecture that is worth about one
+### 6. The one config field that is worth 13 points — and the architecture that is worth about two
 
 The estimator diagnosis in result 5 was reached by elimination, so I tested it
 on the KPI the project is scored against. `attribution="model"` instead of
@@ -191,19 +191,28 @@ held-out permutation importance, one field, same 200 bootstrap replicates.
 
 Read as a 2x2 rather than a ladder, this decomposes the loop:
 
-- Changing the **attribution statistic** is worth **+13.0** points, and makes
-  the loop **2.8x faster**.
-- Changing the **architecture** — screen, correlation grouping, bootstrap
-  verify, drop — is worth **+2.3** points on top of the noisy statistic
-  (`perm_only` → `agent`) and **−1.1** on top of the good one
-  (`rf_impurity` → `agent_model`). Both are inside one standard deviation of
-  the replicate-to-replicate spread.
+|  | permutation attribution | model-native attribution | statistic is worth |
+|---|---|---|---|
+| **bare ranker** (attribution step only) | `perm_only` 20.0% | *[not measured]* | *[not measured]* |
+| **full agent loop** | `agent` 22.3% | `agent_model` 35.3% | **+13.0** |
+| **architecture is worth** | +2.3 | *[not measured]* | |
 
-So the plan/correlate/verify machinery is close to a no-op in *both*
-directions, and the loop's stability is essentially a function of which
-importance statistic it consumes. `agent_model` runs a screen, a correlation
-grouping, 12 bootstrap replays and a drop step over roughly what `rf_impurity`
-reports directly, takes 14.1x longer, and finishes 1.1 points behind it.
+The clean cell is the bottom row — one config field, everything else identical:
+**+13.0 points and a 2.8x speedup** (40.3 min → 14.6 min). Against that, the
+whole architecture (screen, correlation grouping, bootstrap verify, drop) is
+worth **+2.3** points over the permutation statistic, inside one standard
+deviation of the replicate-to-replicate spread (15.2 points).
+
+The model-native architecture delta is blank on purpose. I first filled it with
+`rf_impurity` (36.5%) and got −1.1, and an adversarial review
+(`codex`, quoted in `critique_log.md` Turn 10) correctly rejected that:
+`rf_impurity` fits a 500-tree forest over every cleaned sensor with no screen,
+so subtracting it from `agent_model` prices the architecture *plus* a tree count
+*plus* a candidate universe. The matched arm — the loop's own attribution step
+with the other statistic and nothing after it — is now implemented
+(`model_only`, built from `AgentRCA._rank` so it cannot drift, with a test
+asserting its permutation twin reproduces `perm_only` exactly) and **queued
+behind H6**. Until it lands the cell is a blank, not an estimate.
 
 The prediction was written down before the run (`critique_log.md`, Turn 8):
 "materially above 22.3%, landing near `rf_impurity`'s 36.5%, and will not reach
@@ -234,9 +243,27 @@ calibrated rule.** Zero of the 125 name anything. The null worlds that get
 through are entirely ones where the attribution estimator handed a pure-noise
 sensor a genuinely high support.
 
-Which means the guards are not the mechanism behind the false-discovery rate at
-*either* depth — the original result-1 diagnosis was right and my correction to
-it was wrong — and the residual error-control failure is now attributed to the
+An adversarial review pushed back on exactly the right spot: τ = 0.417 is *one*
+threshold fitted on the whole null, whereas the 91.5% headline refits τ on one
+half of the replicates and counts on the other, so the cross-tab did not prove
+the claim for every split. It is now counted inside that protocol instead —
+per split, how many evaluation-half replicates both had the guard fire *and*
+named a suspect over that split's own τ:
+
+| `select_k = 5` | smallest τ fitted | splits where the guard reached the report |
+|---|---|---|
+| α = 0.1 | 0.333 | **0 of 800** |
+| α = 0.05 | 0.417 | **0 of 800** |
+| α = 0.01 | 0.417 | **0 of 800** |
+
+Zero everywhere, and not by luck: the smallest τ any split fits still sits above
+`stability_min` = 0.3, and the guard fires only when every support is below it.
+The objection turned a claim resting on one threshold into one resting on an
+ordering that holds across all 800.
+
+So the guards are not the mechanism behind the false-discovery rate at *either*
+depth — the original result-1 diagnosis was right and my correction to it was
+wrong — and the residual error-control failure is now attributed to the
 estimator by measurement rather than by elimination. Fixed in the generator,
 pinned by two new tests, and the full reasoning is in `critique_log.md` Turn 10.
 No headline number changes.
@@ -388,6 +415,17 @@ accuracy and the two columns must be read together.
 
 Both depths are being run, because the one lesson from Turn 9 that survived is
 that a single operating point is never enough.
+
+| job | started | expect | check |
+|---|---|---|---|
+| **`model_only`** — the matched bare-ranker cell of the result-6 2x2 | queued behind H6 | fills the `*[not measured]*` blank in `runs/secom_stability.json` | `tail -3 runs/stability_model_only.log`; done when it ends with `MODEL_ONLY DONE` |
+
+`model_only` is the loop's own attribution step with model-native importance and
+nothing after it — the arm that makes the model-native column's architecture
+delta a matched subtraction instead of a confounded one. It waits on H6's
+completion marker rather than running alongside it, since both want the same 16
+workers. Once it lands, `scripts/report.py` fills the blank automatically and
+`--check` will flag `RESULTS.md` as stale until it is regenerated.
 
 Also queued, cosmetic: re-run `scripts/null_fdr_rankers.py --variants` so its
 JSON's own `leakage_control` field carries the corrected protocol text. The

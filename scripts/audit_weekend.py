@@ -75,10 +75,9 @@ def claims(d):
                             f"{_stab(name):.1f}%"))
         if "agent_model" in rk_:
             out += [
+                # The only unconfounded cell of the 2x2: one config field.
                 ("attribution delta (agent -> agent_model)", "secom_stability",
                  f"+{_stab('agent_model') - _stab('agent'):.1f}"),
-                ("machinery delta on model attribution", "secom_stability",
-                 f"-{_stab('rf_impurity') - _stab('agent_model'):.1f}"),
                 ("machinery delta on permutation attribution",
                  "secom_stability",
                  f"+{_stab('agent') - _stab('perm_only'):.1f}"),
@@ -86,14 +85,22 @@ def claims(d):
                  f"{_wall('agent') / _wall('agent_model'):.1f}x"),
                 ("agent_model wall", "secom_stability",
                  f"{_wall('agent_model'):.1f} min"),
-                # The claim is a *ratio* of walls, and writing it from the
-                # rounded minutes is how "14.6x" got into this document once.
-                ("agent_model vs rf_impurity wall ratio", "secom_stability",
-                 f"{_wall('agent_model') / _wall('rf_impurity'):.1f}x"),
-                ("agent_model shortfall against rf_impurity",
-                 "secom_stability",
-                 f"{_stab('rf_impurity') - _stab('agent_model'):.1f} points"),
                 ("agent wall", "secom_stability", f"{_wall('agent'):.1f} min"),
+            ]
+        # The model-native architecture delta is only auditable once the
+        # matched bare-ranker arm exists. Before that the document must carry
+        # a blank, and this asserts the blank is there -- so a confounded
+        # estimate cannot quietly reappear in its place.
+        if "agent_model" in rk_ and "model_only" not in rk_:
+            out.append(("model-native architecture delta is unmeasured",
+                        "secom_stability", "*[not measured]*"))
+        elif "model_only" in rk_:
+            out += [
+                ("model_only top-5 stability", "secom_stability",
+                 f"{_stab('model_only'):.1f}%"),
+                ("machinery delta on model attribution, matched arm",
+                 "secom_stability",
+                 f"{_stab('agent_model') - _stab('model_only'):+.1f}"),
             ]
     if nf:
         out += [
@@ -132,6 +139,20 @@ def claims(d):
                  f"{max(r['max_stability'] for r in unaided):.3f} | "
                  f"{over(unaided)} |"),
                 ("tau(0.05) at k=5", "null_fdr_k5", f"{tau5:.3f}"),
+            ]
+    if ab5:
+        # The strengthened version of the same claim: counted per
+        # calibration/evaluation split rather than against one full-null tau.
+        for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+            m = (ab5.get("levels") or {}).get(key)
+            if not m or "tau_min" not in m:
+                continue
+            out += [
+                (f"smallest tau fitted, {key}", "abstain_k5",
+                 f"{m['tau_min']:.3f}"),
+                (f"guard reached the report, {key}", "abstain_k5",
+                 f"{m['fallback_reached_report_total']} of "
+                 f"{m['n_splits_evaluated']}"),
             ]
     if ab:
         m = ab["levels"]["alpha_0.05"]

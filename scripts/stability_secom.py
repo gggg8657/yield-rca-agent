@@ -79,6 +79,37 @@ def rank_perm_only(X, y):
     return cl.keep_[np.argsort(imp)[::-1]]
 
 
+def _bare_rank(X, y, attribution):
+    """The loop's attribution step alone, with nothing after it.
+
+    Built by calling ``AgentRCA._rank`` rather than by reimplementing it, so a
+    "bare ranker" cell can never drift away from the statistic the full loop
+    actually consumes. Everything the loop does *after* ranking -- correlation
+    grouping, bootstrap verification, the drop step -- is skipped, and nothing
+    before it is changed: same base (300-tree forest), same ``screen="model"``
+    candidate pool at ``n_screen``, same inner splits and repeats, same seed.
+
+    This exists because an adversarial review of the 2x2 in `RESULTS.md` was
+    right about it. `rf_impurity` had been standing in as the bare-ranker cell
+    for model-native attribution, and it is not a matched arm: it fits a
+    500-tree forest with different defaults over *every* cleaned sensor with no
+    screen. Subtracting it from `agent_model` prices the architecture plus a
+    tree count plus a candidate universe. This arm prices the architecture.
+    """
+    cl, Xc = _cleaned(X, y)
+    cfg = dict(AGENT_CFG)
+    cfg["attribution"] = attribution
+    est = AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **cfg)
+    imp = est._rank(Xc, y, cfg["n_screen"], cfg["n_inner"], cfg["n_repeats"],
+                    cfg["random_state"])
+    return cl.keep_[np.argsort(imp)[::-1]]
+
+
+def rank_model_only(X, y):
+    """The model-native counterpart of `perm_only`: attribution step, no loop."""
+    return _bare_rank(X, y, "model")
+
+
 def rank_agent(X, y):
     """Full loop: attribute -> correlate -> verify -> drop, as reported."""
     return AgentRCA(base="rf", base_kw=AGENT_BASE_KW, **AGENT_CFG) \
@@ -115,6 +146,8 @@ RANKERS = {
     "rf_impurity": ("random-forest impurity importance", rank_rf_impurity),
     "perm_only": ("SensorAgent only: screen + held-out permutation AUC drop",
                   rank_perm_only),
+    "model_only": ("SensorAgent only: screen + model-native importance",
+                   rank_model_only),
     "agent_no_corr": ("attribute -> verify -> drop, correlation grouping off",
                       rank_agent_no_corr),
     "agent": ("full agent loop: attribute -> correlate -> verify -> drop",

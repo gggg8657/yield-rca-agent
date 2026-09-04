@@ -314,3 +314,33 @@ def test_calibrated_error_control_ignores_the_fallback():
     for r in fired:
         assert r["max_stability"] < r["stability_min"]
         assert not any(v >= tau for v in r["stability_values"])
+
+
+# ------------------------------- the 2x2's bare-ranker cells must be matched
+def test_bare_ranker_cells_are_the_same_construction():
+    """`perm_only` and `model_only` must differ only in the statistic.
+
+    The decomposition in `RESULTS.md` subtracts a bare ranker from the full
+    loop in each attribution column, and that subtraction only prices the
+    architecture if the two bare cells are the same construction. An earlier
+    version used `rf_impurity` as the model-native cell, which fits a different
+    forest over a different candidate universe -- so the subtraction priced the
+    architecture plus two confounds. `_bare_rank` exists to remove them, and
+    this asserts it: driving it with `attribution="permutation"` must reproduce
+    the independently written `rank_perm_only` exactly.
+    """
+    import stability_secom as ss
+
+    X, y, _, _ = make_synthetic(n=180, p=30, n_causal=3, seed=3)
+    a = ss._bare_rank(X, y, "permutation")
+    b = ss.rank_perm_only(X, y)
+    assert np.array_equal(a, b), (
+        "the bare-ranker helper and rank_perm_only have diverged, so the "
+        "perm_only column of the RESULTS.md 2x2 no longer prices only the "
+        "architecture")
+
+    # And the model-native cell is the same construction with one field moved,
+    # so it ranks the same universe -- not a wider or narrower one.
+    m = ss._bare_rank(X, y, "model")
+    assert set(m.tolist()) == set(a.tolist())
+    assert not np.array_equal(m, a), "the two statistics should not coincide"

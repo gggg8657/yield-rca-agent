@@ -197,17 +197,17 @@ The most stable ranker in the table is `univariate` -- the plan/verify machinery
 
 So verification is worth +2.1% of top-5 agreement and grouping +0.2%. Only one of the two steps is doing measurable work here. Note also that the raw and cluster-aware columns barely differ across the whole table, which says the top 5 mostly are *not* drawn from the near-duplicate families that motivated grouping -- the instability is between genuinely different sensors.
 
-**And which part is the statistic rather than the structure?** The ladder holds the attribution statistic fixed, so it can only price the loop's mechanisms. `agent_model` is the same loop with one field changed -- `attribution="model"` instead of held-out permutation importance -- which turns the table into a 2x2:
+**And which part is the statistic rather than the structure?** The ladder holds the attribution statistic fixed, so it can only price the loop's mechanisms. `agent_model` is the same loop with one field changed -- `attribution="model"` instead of held-out permutation importance -- and `perm_only`/`model_only` are the loop's attribution step with nothing after it, which turns the table into a 2x2:
 
 |  | permutation attribution | model-native attribution | statistic is worth |
 |---|---|---|---|
-| **bare ranker** | `perm_only` 20.0% | `rf_impurity` 36.5% | +16.4 |
+| **bare ranker** (attribution step only) | `perm_only` 20.0% | *[not measured]* | *[not measured]* |
 | **full agent loop** | `agent` 22.3% | `agent_model` 35.3% | +13.0 |
-| **architecture is worth** | +2.3 | -1.1 |  |
+| **architecture is worth** | +2.3 | *[not measured]* |  |
 
-Changing the **statistic** is worth +13.0 points to the loop and makes it 2.8x faster (40.3 min to 14.6 min). Changing the **architecture** -- screen, correlation grouping, bootstrap verify, drop -- is worth +2.3 points on top of the noisy statistic and -1.1 on top of the better one. Both architecture deltas are inside one standard deviation of the replicate-to-replicate spread (15.2 points), and they point in opposite directions.
+The clean cell is the bottom row: one configuration field, everything else identical, worth **+13.0 points** to the loop and a 2.8x speedup (40.3 min to 14.6 min). Against that, the whole architecture -- screen, correlation grouping, bootstrap verify, drop -- is worth +2.3 points over the permutation statistic, which is inside one standard deviation of the replicate-to-replicate spread (15.2 points).
 
-So on this dataset the loop's stability is close to a function of which importance statistic it consumes, and the plan/correlate/verify machinery around that statistic is approximately a no-op in both directions. The sharpest form of it is the right-hand column: `agent_model` runs a screen, a correlation grouping, a bootstrap verification pass and a drop step over roughly what `rf_impurity` reports directly, takes 14.1x longer, and finishes 1.1 points behind it.
+**The model-native column's architecture delta is deliberately blank.** Pricing it needs a bare ranker built the same way as `perm_only` but with the other statistic, and that arm (`model_only`) is queued rather than measured. `rf_impurity` is not a substitute for it: at 36.5% it is close, but it fits a 500-tree forest over every cleaned sensor with no screen, so the difference from `agent_model` is the architecture plus a tree count plus a candidate universe. A blank is the honest entry until the matched arm lands.
 
 *This was run as a pre-registered prediction rather than a sweep.* `critique_log.md` Turn 8 predicted, before the run, that the swap would land near `rf_impurity`'s 36.5% and would not reach the 80% KPI; the competing explanation on record predicted it would stay near 22.3%. Both halves of the first prediction hold, and the miss against the KPI is still 44.7 points.
 
@@ -345,6 +345,16 @@ At the pre-registered depth the threshold is so loose that 13.7 noise sensors cl
 The fallback fires exactly when no sensor clears pi = 0.3, so by construction those replicates top out below 0.3 -- and tau(0.05) = 0.417 sits *above* pi. Every one of the 125 replicates the fallback fires on is therefore silent under the calibrated rule: 0 of them name anything. The 25 null replicates that do get through are all replicates where the threshold was cleared on merit -- that is, where the attribution estimator handed a pure-noise sensor a genuinely high bootstrap support. **The residual error-control failure is the estimator's, not the guard's.**
 
 One bookkeeping note, so the counts are not read as inconsistent: the 25 above uses this run's own full-null tau, while the error-control column in the table above is the split-half held-out figure from `scripts/abstain.py`, which fits tau on one half of the null replicates and counts on the other. The two differ by the usual amount an in-sample quantile differs from a held-out one; the held-out figure is the one that carries the claim, and the cross-tab is here for the mechanism, not for the rate.
+
+**And the same question, asked inside the protocol that produces the figure.** The cross-tab above thresholds at one full-null tau, which is not the tau the error-control column uses; an adversarial review pointed out that this leaves the stronger claim unproven. So `scripts/abstain.py` now counts it per split: across every calibration/evaluation partition, how many evaluation-half replicates both had the guard fire *and* named a suspect over that split's own tau.
+
+| `select_k = 5` | smallest tau fitted | largest tau fitted | splits where the guard reached the report |
+|---|---|---|---|
+| alpha = 0.1 | 0.333 | 0.417 | 0 of 800 |
+| alpha = 0.05 | 0.417 | 0.500 | 0 of 800 |
+| alpha = 0.01 | 0.417 | 0.501 | 0 of 800 |
+
+Zero, at every level, and the reason is visible in the tau column: the smallest threshold any split fits still sits above `stability_min` = 0.3, and the guard fires only when every support is below it. So this is not a rate that happened to come out at zero -- it is an ordering that holds across all 800 fitted thresholds. The guard cannot reach the calibrated report at this operating point.
 
 *This retracts a correction made earlier in this repository.* Turn 9 of `critique_log.md` read the 62.5% fallback rate as the guard destroying an otherwise working filter, and wrote that up as overturning an earlier finding. The re-reading was wrong in the same way the thing it corrected was: it took a property of `selected_`, the prediction set, and attributed it to the report. The original reading -- that the guards are not the mechanism behind the false-discovery rate -- holds at both depths. What is true about the fallback is narrower: it makes the *uncalibrated* `stability_min` filter unable to return an empty prediction set, and the abstention row above is 0% at both depths because these runs set `report_tau = None`, which disables abstention by configuration. Neither fact bears on the tau-calibrated column.
 

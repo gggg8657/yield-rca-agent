@@ -100,13 +100,26 @@ def null_structure(null, real, n_eff):
 
 
 def _evaluate(reps, tau):
-    """Abstention rate and surviving-suspect count for one set of replicates."""
+    """Abstention rate and surviving-suspect count for one set of replicates.
+
+    ``fallback_reached_report`` answers an objection raised against this
+    repository's write-up: the cross-tab in `RESULTS.md` shows that no
+    replicate the never-empty guard fired on clears the *full-null* tau, which
+    is not the tau this function is called with. So count it here instead,
+    inside the split-half protocol that produces the headline figure -- the
+    number of evaluation-half replicates that both had the guard fire and named
+    at least one suspect over that split's own tau. If it is 0 for every split,
+    the guard provably never reaches the calibrated report.
+    """
     kept = [int(sum(v >= tau for v in r["stability_values"])) for r in reps]
+    reach = [k > 0 and r.get("fallback_fired", False)
+             for k, r in zip(kept, reps)]
     return {
         "n": len(reps),
         "abstention_rate": float(np.mean([k == 0 for k in kept])) if kept else float("nan"),
         "n_reported_mean": float(np.mean(kept)) if kept else float("nan"),
         "n_reported_max": int(max(kept)) if kept else 0,
+        "fallback_reached_report": int(sum(reach)),
     }
 
 
@@ -135,6 +148,7 @@ def main():
     rows = {}
     for alpha in ALPHAS:
         taus, null_ab, null_fd, real_ab, real_n = [], [], [], [], []
+        reach = []
         for _ in range(a.splits):
             perm = rng.permutation(idx)
             halves = (perm[: len(perm) // 2], perm[len(perm) // 2:])
@@ -147,10 +161,21 @@ def main():
                 null_fd.append(e_null["n_reported_mean"])
                 real_ab.append(e_real["abstention_rate"])
                 real_n.append(e_real["n_reported_mean"])
+                reach.append(e_null["fallback_reached_report"])
         rows[f"alpha_{alpha}"] = {
             "alpha": alpha,
             "tau_mean": float(np.mean(taus)),
             "tau_sd": float(np.std(taus, ddof=1)),
+            "tau_min": float(np.min(taus)),
+            "tau_max": float(np.max(taus)),
+            # Does the never-empty guard ever reach the calibrated report?
+            # Counted inside every calibration/evaluation split rather than
+            # against one full-null threshold.
+            "n_splits_evaluated": len(reach),
+            "fallback_reached_report_total": int(sum(reach)),
+            "fallback_reached_report_rate": (
+                float(np.mean([x > 0 for x in reach])) if reach
+                else float("nan")),
             # held-out null: the share of no-cause worlds correctly kept silent
             "null_abstention_heldout": float(np.mean(null_ab)),
             "null_abstention_target": 1.0 - alpha,

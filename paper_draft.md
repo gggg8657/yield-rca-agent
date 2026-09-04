@@ -473,24 +473,35 @@ bootstrap replicates:
 
 |  | permutation attribution | model-native attribution | statistic is worth |
 |---|---|---|---|
-| bare ranker | `perm_only` 20.0% | `rf_impurity` 36.5% | +16.4 |
+| bare ranker (attribution step only) | `perm_only` 20.0% | *[not measured]* | *[not measured]* |
 | full pipeline | `agent` 22.3% | `agent_model` 35.3% | +13.0 |
-| architecture is worth | +2.3 | −1.1 | |
+| architecture is worth | +2.3 | *[not measured]* | |
 
 The asymmetry is the result. Changing the attribution statistic is worth +13.0
-points to the pipeline and makes it 2.8x cheaper (40.3 to 14.6 minutes).
+points to the pipeline and makes it 2.8x cheaper (40.3 to 14.6 minutes); this
+cell is a single configuration field with everything else held identical.
 Changing the architecture — screen, correlation grouping, bootstrap
-verification, drop — is worth +2.3 points over the noisier statistic and −1.1
-over the better one; both lie inside one standard deviation of the
-replicate-to-replicate spread (15.2 points) and they point in opposite
-directions. On this dataset the pipeline's selection stability is close to a
-function of which importance statistic it consumes, and the multi-agent
-structure around that statistic is approximately a no-op in both directions.
+verification, drop — is worth +2.3 points over the permutation statistic, which
+lies inside one standard deviation of the replicate-to-replicate spread (15.2
+points). On this dataset the pipeline's selection stability is therefore much
+more nearly a function of which importance statistic it consumes than of the
+multi-agent structure arranged around it.
 
-The right-hand column states it most sharply: `agent_model` runs a screen, a
-correlation grouping, a bootstrap verification pass and a drop step over roughly
-what `rf_impurity` reports directly, takes 14.1x longer, and finishes 1.1 points
-behind it.
+The model-native architecture cell is reported as unmeasured rather than
+estimated, and the reason is worth recording. We first filled it with
+`rf_impurity`, an off-the-shelf forest-impurity ranking, obtaining −1.1 points.
+An adversarial review rejected that substitution correctly: `rf_impurity` fits a
+500-tree forest with different leaf constraints over *every* cleaned sensor with
+no screening step, so subtracting it from `agent_model` prices the architecture
+together with a tree count and a candidate universe. The matched arm is the
+pipeline's own attribution step with the other statistic and nothing after it,
+and we construct it by calling the estimator's internal ranking method directly
+so that it cannot drift from the statistic the full pipeline consumes; a
+regression test asserts that driving the same helper with permutation
+attribution reproduces `perm_only` exactly. That arm was queued at the time of
+writing. Reporting a blank is not modesty here — a confounded subtraction in a
+table whose entire purpose is to separate two factors would be worse than no
+number.
 
 This was run as a pre-registered prediction rather than as a sweep, which is why
 we report it as a decomposition rather than as a tuning result. The prediction —

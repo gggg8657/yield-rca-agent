@@ -3,7 +3,7 @@
     "rule": "report suspect j iff its bootstrap support s_j >= tau(alpha), where tau(alpha) is the (1-alpha) quantile of max_j s_j over null replicates (Westfall-Young max-statistic, family-wise over the sensors screened)",
     "calibration": "null replicates split in half; tau fitted on one half, all rates reported on the other; both directions averaged over 400 random partitions",
     "why_split": "fitting tau and measuring abstention on the same replicates returns 1-alpha by construction and measures nothing",
-    "source": "runs/null_fdr_k5.json",
+    "source": "runs/null_fdr_k5_model.json",
     "n_null": 200,
     "n_real": 40,
     "refits": 0,
@@ -17,72 +17,72 @@
   },
   "no_rule_baseline": {
     "null_abstention": 0.0,
-    "null_reported_mean": 3.6,
-    "real_reported_mean": 1.8,
+    "null_reported_mean": 2.225,
+    "real_reported_mean": 3.75,
     "note": "the pipeline as it stands, with no abstention rule"
   },
   "null_structure": {
     "n_eff_sensors": 474,
     "null": {
       "n_replicates_top5": 200,
-      "top5_pairwise_overlap": 0.01371859296482412,
-      "selected_pairwise_overlap": 0.004993459360293531,
-      "distinct_sensors_ever_named": 333
+      "top5_pairwise_overlap": 0.015909547738693467,
+      "selected_pairwise_overlap": 0.004474335965541996,
+      "distinct_sensors_ever_named": 244
     },
     "real": {
       "n_replicates_top5": 40,
-      "top5_pairwise_overlap": 0.5758974358974358,
-      "selected_pairwise_overlap": 0.5883760683760683,
-      "distinct_sensors_ever_named": 9
+      "top5_pairwise_overlap": 0.6658974358974358,
+      "selected_pairwise_overlap": 0.5777335164835165,
+      "distinct_sensors_ever_named": 12
     },
     "random_floor_top5": 0.010548523206751054,
-    "verdict": "null replicates agree with each other at 0.014, against a random floor of 0.011 and 0.576 on real labels -- indistinguishable from resampled noise, so the correlation-structure explanation does not hold"
+    "verdict": "null replicates agree with each other at 0.016, against a random floor of 0.011 and 0.666 on real labels -- indistinguishable from resampled noise, so the correlation-structure explanation does not hold"
   },
   "levels": {
     "alpha_0.1": {
       "alpha": 0.1,
-      "tau_mean": 0.3992604166666668,
-      "tau_sd": 0.03285363367769402,
-      "tau_min": 0.3333333333333333,
-      "tau_max": 0.4166666666666667,
+      "tau_mean": 0.6136666666666668,
+      "tau_sd": 0.041728489804382644,
+      "tau_min": 0.5083333333333341,
+      "tau_max": 0.75,
       "n_splits_evaluated": 800,
       "fallback_reached_report_total": 0,
       "fallback_reached_report_rate": 0.0,
-      "null_abstention_heldout": 0.84845,
+      "null_abstention_heldout": 0.857725,
       "null_abstention_target": 0.9,
-      "null_false_discoveries_heldout": 0.1727375,
-      "real_abstention": 0.022281249999999996,
-      "real_reported_mean": 1.3320937500000003
+      "null_false_discoveries_heldout": 0.14727500000000002,
+      "real_abstention": 0.0,
+      "real_reported_mean": 1.70125
     },
     "alpha_0.05": {
       "alpha": 0.05,
-      "tau_mean": 0.439234375,
-      "tau_sd": 0.035963573681255086,
-      "tau_min": 0.4166666666666667,
-      "tau_max": 0.5,
+      "tau_mean": 0.7282447916666664,
+      "tau_sd": 0.04688250907499458,
+      "tau_min": 0.5833333333333334,
+      "tau_max": 0.8333333333333334,
       "n_splits_evaluated": 800,
       "fallback_reached_report_total": 0,
       "fallback_reached_report_rate": 0.0,
-      "null_abstention_heldout": 0.9153749999999999,
+      "null_abstention_heldout": 0.9368124999999999,
       "null_abstention_target": 0.95,
-      "null_false_discoveries_heldout": 0.0912,
-      "real_abstention": 0.0625,
-      "real_reported_mean": 1.1625000000000003
+      "null_false_discoveries_heldout": 0.0678125,
+      "real_abstention": 0.0,
+      "real_reported_mean": 1.3360312499999998
     },
     "alpha_0.01": {
       "alpha": 0.01,
-      "tau_mean": 0.49835312500000023,
-      "tau_sd": 0.012961564168504898,
-      "tau_min": 0.4166666666666667,
-      "tau_max": 0.5008333333333338,
+      "tau_mean": 0.8495208333333337,
+      "tau_sd": 0.04562085710022063,
+      "tau_min": 0.6675000000000004,
+      "tau_max": 0.9175000000000004,
       "n_splits_evaluated": 800,
       "fallback_reached_report_total": 0,
       "fallback_reached_report_rate": 0.0,
-      "null_abstention_heldout": 0.974575,
+      "null_abstention_heldout": 0.9820000000000002,
       "null_abstention_target": 0.99,
-      "null_false_discoveries_heldout": 0.02545,
-      "real_abstention": 0.19965624999999998,
-      "real_reported_mean": 0.9006562500000002
+      "null_false_discoveries_heldout": 0.0180875,
+      "real_abstention": 0.16315625,
+      "real_reported_mean": 0.9040937499999998
     }
   }
 }

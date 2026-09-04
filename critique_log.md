@@ -1004,3 +1004,112 @@ the pre-registered depth, each priced by `scripts/abstain.py` on the same
 split-half calibration → `runs/null_fdr_k5_model.json`,
 `runs/null_fdr_model.json`. Both depths deliberately, because the one lesson
 from Turn 9 that did survive is that one operating point is never enough.
+
+---
+
+## Turn 10, third part — codex on the two new claims, and both fixes
+
+Ran `codex exec` against `report.attribution_2x2`, `report.fallback_reach`, the
+`RESULTS.md` sections they generate, and `scripts/stability_secom.py`, asking
+for the strongest reason the two new conclusions are wrong or overclaimed. It
+found two, and **both were right.** Neither is a number error; both are
+"this comparison is not the comparison you say it is", which is the class of
+objection worth paying for.
+
+### Finding 1 — the 2x2 was not factorial
+
+> More seriously, the alleged "bare ranker" cells are not corresponding
+> versions of one architecture: `rf_impurity` fits a 500-tree RF with
+> `min_samples_leaf=5` across every cleaned sensor [...] `perm_only` fits a
+> 300-tree RF with different defaults, first screens to `n_screen`, then
+> evaluates held-out permutation importance. [...] Therefore the architecture
+> effects [...] subtract procedures differing in model hyperparameters,
+> screening universe, data splitting, filtering and ranking semantics -- not
+> merely "bare versus full architecture."
+
+Confirmed by reading `scripts/stability_secom.py`: `rank_rf_impurity` calls
+`make_rf(n_estimators=500, min_samples_leaf=5)` with `n_keep=1` over the whole
+cleaned matrix; `rank_perm_only` calls `make_rf(n_estimators=300)` and screens
+to `AGENT_CFG["n_screen"] = 150` first. So `perm_only` **is** a matched bare
+cell for the permutation column — it is the loop's attribution step with the
+loop's own base and screen — and `rf_impurity` is **not** one for the
+model-native column. The `-1.1` I published was the architecture plus a tree
+count plus a candidate universe, and I had described it as the architecture.
+
+The `+13.0` cell survives untouched, because `agent` and `agent_model` differ in
+one field. That is the cell carrying the argument, which is some luck rather
+than any care on my part.
+
+**Fix.** Added `model_only`: the loop's attribution step with model-native
+importance and nothing after it, built by calling `AgentRCA._rank` directly
+rather than reimplementing it, so a bare-ranker cell cannot drift from the
+statistic the full loop consumes. A test
+(`test_bare_ranker_cells_are_the_same_construction`) asserts that driving the
+same helper with `attribution="permutation"` reproduces the independently
+written `rank_perm_only` **exactly** — it does, `np.array_equal` on the full
+ranking — which is what licenses calling the two cells the same construction.
+
+Until that arm lands the cell is `*[not measured]*` in all four documents, and
+`scripts/audit_weekend.py` now **asserts the blank is present** while
+`model_only` is absent from the stability JSON, so a confounded estimate cannot
+quietly reappear there. It flips to auditing the matched delta once the arm
+exists. Queued behind H6 rather than launched, since both want the same 16
+workers.
+
+A blank in the table whose entire purpose is to separate two factors is worse
+to look at and better to publish than a subtraction that mixes them.
+
+### Finding 2 — the cross-tab used a tau the headline does not use
+
+> Showing that fallback-fired records never exceed the full-null tau = 0.417
+> does not show they never exceed every split-specific held-out tau. That would
+> require replaying the fallback/merit cross-tab inside each
+> calibration/evaluation split, or proving every fitted tau exceeds
+> `stability_min = 0.3`.
+
+Also right, and I had half-noticed it — the bookkeeping note I wrote flagged
+that the counts differ between the full-null tau and the split-half protocol,
+then went on to state the mechanism claim as though the full-null cross-tab
+established it. It did not: 800 thresholds get fitted, and I had checked one.
+
+**Fix, taking the first of the two routes codex offered because it is stronger.**
+`scripts/abstain.py` now counts it inside the protocol: per
+calibration/evaluation split, how many evaluation-half replicates both had the
+guard fire *and* named a suspect over that split's own tau. It also records
+`tau_min` and `tau_max` across splits.
+
+| `select_k = 5` | smallest tau fitted | largest tau fitted | splits where the guard reached the report |
+|---|---|---|---|
+| alpha = 0.1 | 0.333 | 0.417 | **0 of 800** |
+| alpha = 0.05 | 0.417 | 0.500 | **0 of 800** |
+| alpha = 0.01 | 0.417 | 0.501 | **0 of 800** |
+
+Zero at every level, and the same holds at `select_k = 40` (`tau_min` 0.833).
+The second route codex named is what explains it: the smallest threshold any
+split fits still sits above `stability_min = 0.3`, and the guard fires only when
+every support is below 0.3. So this is not a rate that happened to come out
+zero, it is an ordering that holds across all 800 fitted thresholds.
+
+The objection therefore **strengthened** the claim rather than weakening it:
+from "no guard-fired replicate clears one full-null threshold" to "none clears
+any of the 800 thresholds the headline protocol actually fits, at all three
+alpha levels, at both depths." Recorded in `RESULTS.md` from
+`runs/abstain_k5.json`, and audited.
+
+### What I take from this exchange
+
+Both findings share a shape: a subtraction or a threshold that was *almost* the
+right one, described as if it were. Neither would have been caught by
+re-running anything, and neither shows up as a stale number — `report.py
+--check` was green and `audit_weekend.py` was green throughout, because every
+figure did trace to a run. What was wrong was which two runs I was differencing
+and which of 800 thresholds I was quoting.
+
+That is worth stating as a limit on this repository's own guardrails. Generating
+every number from a JSON prevents the number from drifting from the run. It does
+**not** prevent the *comparison* from being the wrong one, and three of my last
+four errors this weekend were of that second kind. The check that catches those
+is an adversary reading the arm definitions, which costs a subprocess.
+
+Two audit rows added in response, both of which encode a *comparison* rather
+than a number: the blank assertion above, and the per-split guard-reach count.

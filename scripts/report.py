@@ -707,63 +707,100 @@ def attribution_2x2(st):
     same table as a 2x2 -- {bare ranker, full loop} x {permutation, model-native
     attribution} -- prices the statistic too, and the two are not the same size.
 
-    ``rf_impurity`` is the bare-ranker cell for model-native attribution because
-    it ranks by essentially the statistic ``attribution="model"`` averages, and
-    ``perm_only`` is the bare-ranker cell for permutation because it *is* the
-    loop's attribution step with nothing after it.
+    The bare-ranker cells are ``perm_only`` and ``model_only``: the loop's own
+    attribution step with nothing after it, built from ``AgentRCA._rank`` so
+    they cannot drift from the statistic the full loop consumes. An earlier
+    version of this table used ``rf_impurity`` as the model-native bare cell,
+    which an adversarial review correctly rejected -- it fits a different forest
+    over every cleaned sensor with no screen, so subtracting it from
+    ``agent_model`` priced the architecture plus a tree count plus a candidate
+    universe. Until ``model_only`` lands, that column is reported as unpriced
+    rather than estimated from a mismatched arm.
     """
     r = st.get("rankers") or {}
-    need = ("perm_only", "agent", "rf_impurity", "agent_model")
-    if not all(k in r for k in need):
+    if not all(k in r for k in ("perm_only", "agent", "agent_model")):
         return []
-    v = {k: 100 * r[k]["bootstrap"]["raw"]["pairwise_overlap"] for k in need}
-    w = {k: r[k]["bootstrap"]["wall_min"] for k in need}
+    v = {k: 100 * r[k]["bootstrap"]["raw"]["pairwise_overlap"] for k in r}
+    w = {k: r[k]["bootstrap"]["wall_min"] for k in r}
     d_attr = v["agent_model"] - v["agent"]
     d_arch_perm = v["agent"] - v["perm_only"]
-    d_arch_model = v["agent_model"] - v["rf_impurity"]
+    matched = "model_only" in r
     sd = 100 * r["agent"]["bootstrap"]["raw"]["pairwise_overlap_sd"]
-    return [
+
+    if matched:
+        bare_model = f"`model_only` {v['model_only']:.1f}%"
+        d_bare = f"{v['model_only'] - v['perm_only']:+.1f}"
+        d_arch_model = v["agent_model"] - v["model_only"]
+        arch_model = f"{d_arch_model:+.1f}"
+    else:
+        bare_model = "*[not measured]*"
+        d_bare = "*[not measured]*"
+        d_arch_model = None
+        arch_model = "*[not measured]*"
+
+    body = [
         "**And which part is the statistic rather than the structure?** The "
         "ladder holds the attribution statistic fixed, so it can only price "
         "the loop's mechanisms. `agent_model` is the same loop with one field "
         "changed -- `attribution=\"model\"` instead of held-out permutation "
-        "importance -- which turns the table into a 2x2:", "",
+        "importance -- and `perm_only`/`model_only` are the loop's attribution "
+        "step with nothing after it, which turns the table into a 2x2:", "",
         table([
-            ["**bare ranker**", f"`perm_only` {v['perm_only']:.1f}%",
-             f"`rf_impurity` {v['rf_impurity']:.1f}%",
-             f"{v['rf_impurity'] - v['perm_only']:+.1f}"],
+            ["**bare ranker** (attribution step only)",
+             f"`perm_only` {v['perm_only']:.1f}%", bare_model, d_bare],
             ["**full agent loop**", f"`agent` {v['agent']:.1f}%",
              f"`agent_model` {v['agent_model']:.1f}%", f"{d_attr:+.1f}"],
-            ["**architecture is worth**", f"{d_arch_perm:+.1f}",
-             f"{d_arch_model:+.1f}", ""],
+            ["**architecture is worth**", f"{d_arch_perm:+.1f}", arch_model,
+             ""],
         ], ["", "permutation attribution", "model-native attribution",
             "statistic is worth"]), "",
-        f"Changing the **statistic** is worth {d_attr:+.1f} points to the loop "
-        f"and makes it "
-        f"{w['agent'] / w['agent_model']:.1f}x faster "
-        f"({w['agent']:.1f} min to {w['agent_model']:.1f} min). Changing the "
-        f"**architecture** -- screen, correlation grouping, bootstrap verify, "
-        f"drop -- is worth {d_arch_perm:+.1f} points on top of the noisy "
-        f"statistic and {d_arch_model:+.1f} on top of the better one. Both "
-        f"architecture deltas are inside one standard deviation of the "
-        f"replicate-to-replicate spread ({sd:.1f} points), and they point in "
-        f"opposite directions.", "",
-        f"So on this dataset the loop's stability is close to a function of "
-        f"which importance statistic it consumes, and the plan/correlate/"
-        f"verify machinery around that statistic is approximately a no-op in "
-        f"both directions. The sharpest form of it is the right-hand column: "
-        f"`agent_model` runs a screen, a correlation grouping, a bootstrap "
-        f"verification pass and a drop step over roughly what `rf_impurity` "
-        f"reports directly, takes {w['agent_model'] / w['rf_impurity']:.1f}x "
-        f"longer, and finishes {-d_arch_model:.1f} points behind it.", "",
+        f"The clean cell is the bottom row: one configuration field, everything "
+        f"else identical, worth **{d_attr:+.1f} points** to the loop and a "
+        f"{w['agent'] / w['agent_model']:.1f}x speedup "
+        f"({w['agent']:.1f} min to {w['agent_model']:.1f} min). Against that, "
+        f"the whole architecture -- screen, correlation grouping, bootstrap "
+        f"verify, drop -- is worth {d_arch_perm:+.1f} points over the "
+        f"permutation statistic, which is inside one standard deviation of the "
+        f"replicate-to-replicate spread ({sd:.1f} points).", "",
+    ]
+    if matched:
+        body += [
+            f"With the matched bare cell measured, the architecture is worth "
+            f"{d_arch_perm:+.1f} points in the permutation column and "
+            f"{d_arch_model:+.1f} in the model-native one"
+            + (", and both are inside that one-sd band"
+               if abs(d_arch_model) < sd and abs(d_arch_perm) < sd
+               else ", one of which is outside that one-sd band")
+            + f". Changing the statistic moves the number by "
+              f"{abs(d_attr) / max(abs(d_arch_perm), abs(d_arch_model), 1e-9):.0f}x "
+              f"more than changing the architecture does. So on this dataset "
+              f"the loop's selection stability is close to a function of which "
+              f"importance statistic it consumes, and the plan/correlate/verify "
+              f"machinery around that statistic is approximately a no-op.", "",
+        ]
+    else:
+        body += [
+            "**The model-native column's architecture delta is deliberately "
+            "blank.** Pricing it needs a bare ranker built the same way as "
+            "`perm_only` but with the other statistic, and that arm "
+            "(`model_only`) is queued rather than measured. `rf_impurity` is "
+            f"not a substitute for it: at {v.get('rf_impurity', float('nan')):.1f}% "
+            "it is close, but it fits a 500-tree forest over every cleaned "
+            "sensor with no screen, so the difference from `agent_model` is "
+            "the architecture plus a tree count plus a candidate universe. "
+            "A blank is the honest entry until the matched arm lands.", "",
+        ]
+    body += [
         "*This was run as a pre-registered prediction rather than a sweep.* "
         "`critique_log.md` Turn 8 predicted, before the run, that the swap "
-        f"would land near `rf_impurity`'s {v['rf_impurity']:.1f}% and would "
-        f"not reach the {KPI_STABILITY:.0%} KPI; the competing explanation on "
-        f"record predicted it would stay near {v['agent']:.1f}%. Both halves "
-        f"of the first prediction hold, and the miss against the KPI is still "
+        f"would land near `rf_impurity`'s "
+        f"{v.get('rf_impurity', float('nan')):.1f}% and would not reach the "
+        f"{KPI_STABILITY:.0%} KPI; the competing explanation on record "
+        f"predicted it would stay near {v['agent']:.1f}%. Both halves of the "
+        f"first prediction hold, and the miss against the KPI is still "
         f"{KPI_STABILITY * 100 - v['agent_model']:.1f} points.", "",
     ]
+    return body
 
 
 def sec_stability(st, prof=None):
@@ -1672,7 +1709,7 @@ def sec_ranker_fdr(rk):
     return body
 
 
-def fallback_reach(nf5, alpha="alpha_0.05"):
+def fallback_reach(nf5, ab5=None, alpha="alpha_0.05"):
     """Does the never-empty fallback actually reach the calibrated report?
 
     Written because this repository asserted for one turn that it does -- that
@@ -1729,6 +1766,54 @@ def fallback_reach(nf5, alpha="alpha_0.05"):
         f"by the usual amount an in-sample quantile differs from a held-out "
         f"one; the held-out figure is the one that carries the claim, and the "
         f"cross-tab is here for the mechanism, not for the rate.", "",
+    ] + _fallback_reach_heldout(ab5) + [
+    ]
+
+
+def _fallback_reach_heldout(ab5):
+    """The same question asked inside the protocol that carries the figure.
+
+    An adversarial review of the cross-tab above made the right objection: one
+    full-null tau is not the tau the headline uses, so showing that no
+    guard-fired replicate clears 0.417 does not show that none clears every
+    split-specific held-out tau. `scripts/abstain.py` now counts it directly,
+    per calibration/evaluation split, which is a strictly stronger check than
+    the one the objection asked for.
+    """
+    lv = (ab5 or {}).get("levels") or {}
+    if not lv:
+        return []
+    rows = []
+    for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
+        m = lv.get(key)
+        if not m:
+            continue
+        rows.append([f"alpha = {m['alpha']}", f"{m['tau_min']:.3f}",
+                     f"{m['tau_max']:.3f}",
+                     f"{m['fallback_reached_report_total']} of "
+                     f"{m['n_splits_evaluated']}"])
+    if not rows:
+        return []
+    return [
+        "**And the same question, asked inside the protocol that produces the "
+        "figure.** The cross-tab above thresholds at one full-null tau, which "
+        "is not the tau the error-control column uses; an adversarial review "
+        "pointed out that this leaves the stronger claim unproven. So "
+        "`scripts/abstain.py` now counts it per split: across every "
+        "calibration/evaluation partition, how many evaluation-half "
+        "replicates both had the guard fire *and* named a suspect over that "
+        "split's own tau.", "",
+        table(rows, ["`select_k = 5`", "smallest tau fitted",
+                     "largest tau fitted",
+                     "splits where the guard reached the report"]), "",
+        "Zero, at every level, and the reason is visible in the tau column: "
+        "the smallest threshold any split fits still sits above "
+        f"`stability_min` = 0.3, and the guard fires only when every support "
+        f"is below it. So this is not a rate that happened to come out at "
+        f"zero -- it is an ordering that holds across all "
+        f"{lv['alpha_0.05']['n_splits_evaluated']} fitted thresholds. The "
+        "guard cannot reach the calibrated report at this operating point.", "",
+    ] + [
         "*This retracts a correction made earlier in this repository.* Turn 9 "
         "of `critique_log.md` read the 62.5% fallback rate as the guard "
         "destroying an otherwise working filter, and wrote that up as "
@@ -1860,7 +1945,7 @@ def sec_depth(ab, ab_k5, rk, nf=None, nf5=None):
             f"clear it -- and the fallback takes over, firing on "
             f"{pct(n5['fallback_rate'])} of null replicates.", "",
         ]
-        body += fallback_reach(nf5)
+        body += fallback_reach(nf5, ab_k5)
 
     if uni:
         gap5 = uni["null_abstention_heldout"] - a5["null_abstention_heldout"]
