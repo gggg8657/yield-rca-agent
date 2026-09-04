@@ -1873,6 +1873,116 @@ def sec_invariance(iv):
     return body
 
 
+def sec_recommend(ev, ab, rk, ab5=None):
+    """What to actually do with this, computed from what was measured.
+
+    This section used to be hand-written, and by the time the false-discovery
+    and ranker results landed it was recommending the opposite of what the
+    numbers supported -- specifically "report with the loop, and quote its
+    stability", when that stability had turned out to be uncalibrated. It is
+    generated now so it cannot drift again.
+    """
+    if not ev:
+        return []
+    auc = ev["auc"]["per_arm"]
+    best = max((a for a in auc if a != "majority"), key=lambda a: auc[a]["mean"])
+    L = [
+        f"**Predict with every sensor -- with one asterisk.** Under the "
+        f"shuffled protocol selection costs AUC monotonically, because the "
+        f"signal is diffuse, so `{best}` at {auc[best]['mean']:.3f} is the "
+        f"model to deploy. The asterisk is that forward in time the ordering "
+        f"reverses and the sparse arms come out ahead; that comparison has "
+        f"{ev['protocol']['rolling_origin']['n_origins']} origins behind it "
+        f"and its interval includes zero, so it is a reason to monitor and "
+        f"re-measure as wafers accumulate, not a reason to ship the sparse "
+        f"model today.",
+    ]
+    if ab and (ab.get("levels") or {}).get("alpha_0.05"):
+        mid = ab["levels"]["alpha_0.05"]
+        base = ab["no_rule_baseline"]
+        L.append(
+            f"**Do not ship the suspect list without a null-calibrated "
+            f"bar.** As it stands the loop reports "
+            f"{base['real_reported_mean']:.1f} suspects and abstains on "
+            f"nothing, and on permuted labels it does the same -- so the list "
+            f"length carries no information about the process. "
+            f"`AgentRCA(report_tau=...)` fixes that: at alpha = "
+            f"{mid['alpha']:g} the report becomes "
+            f"{mid['real_reported_mean']:.2f} sensors and is empty "
+            f"{pct(mid['real_abstention'])} of the time. Prediction is "
+            f"untouched either way, so this costs no AUC.")
+    if rk and rk.get("per_ranker"):
+        per = rk["per_ranker"]
+        plain = {k: v for k, v in per.items() if not k.startswith("agent")}
+        ag_k = next((k for k in per if k.startswith("agent")), None)
+        if plain and ag_k:
+            def ctl(v):
+                return v["heldout_alpha_0.05"]["null_abstention_heldout"]
+            bk = max(plain, key=lambda k: ctl(plain[k]))
+            bh = plain[bk]["heldout_alpha_0.05"]
+            ah = per[ag_k]["heldout_alpha_0.05"]
+            better = ctl(plain[bk]) >= ctl(per[ag_k])
+            L.append(
+                f"**Consider replacing the ranking core with a univariate "
+                f"ranker.** `{bk}` reaches {pct(bh['null_abstention_heldout'])} "
+                f"error control against the loop's "
+                f"{pct(ah['null_abstention_heldout'])} and reports "
+                f"{bh['real_reported_mean']:.2f} suspects against "
+                f"{ah['real_reported_mean']:.2f}, without a "
+                f"permutation-importance pass, a correlation-grouping step or "
+                f"a verification loop."
+                + (" Two caveats on that comparison are in the section above "
+                   "-- the depth was probed for the baseline, and the "
+                   "separation column rewards repeatability -- so read this as "
+                   "the strongest available reason to try the swap and "
+                   "measure, not as a settled result."
+                   if better else
+                   " The comparison is close enough that the swap is worth "
+                   "measuring rather than assuming."))
+    if ab5 and (ab5.get("levels") or {}).get("alpha_0.05"):
+        a5 = ab5["levels"]["alpha_0.05"]
+        a40 = (ab.get("levels") or {}).get("alpha_0.05") if ab else None
+        a40_k = (ab.get("protocol") or {}).get("select_k", "40")
+        a5_k = (ab5.get("protocol") or {}).get("select_k", "5")
+        if a40:
+            d = a5["null_abstention_heldout"] - a40["null_abstention_heldout"]
+            L.append(
+                f"**Tune the bootstrap selection depth before tuning "
+                f"anything else.** Dropping the loop's `select_k` from "
+                f"{a40_k} to {a5_k} moved its error control by "
+                f"{d * 100:+.1f} points on its own"
+                + (", which is a larger effect than any ranker change "
+                   "measured here and it is free." if abs(d) > 0.02 else
+                   ", so for this loop depth is not the lever it is for a "
+                   "univariate ranker."))
+    L += [
+        "**Believe the forward-in-time split, not the shuffled one.** For a "
+        "go/no-go decision the shuffled-CV number is the optimistic one, and "
+        "the drift diagnostics say why: era is far more predictable from these "
+        "sensors than failure is. Plan on retraining, and treat any fixed "
+        "model as having a shelf life measured in weeks.",
+        "**Treat the suspect list as a work order, not a diagnosis.** The "
+        "invariance screen cannot certify any of these sensors as causal at "
+        "this sample size, so the useful output is a shortlist of signal "
+        "*families* worth an engineer's afternoon -- and, with the bar above "
+        "in place, sometimes no shortlist at all.",
+        "",
+        "The honest summary of the KPI card: on SECOM this pipeline is a "
+        "decent predictor and an unreliable attributor, its attribution is "
+        "associational rather than causal, and the agent machinery is not what "
+        "earns either -- a plain ranker matches or beats it on every axis "
+        "measured here.",
+    ]
+    # Numbered here rather than in the strings: any bullet can be dormant
+    # when its run has not happened, and a hard-coded list skips a number.
+    tail = L[-2:] if L and L[-2] == "" else []
+    items = L[:-2] if tail else L
+    out = [f"{i}. {t}" for i, t in enumerate(items, 1)]
+    return ["## What to actually do with this", "",
+            "The measurements point at one configuration, and it is not the "
+            "one that scores best on a slide:", ""] + out + tail + [""]
+
+
 def sec_kpi(ev, st, prof):
     if not (ev and st and "agent" in st.get("rankers", {})):
         return []
@@ -1978,6 +2088,7 @@ def build(runs: Path):
     L += sec_depth(ab, ab5, rk)
     L += sec_invariance(iv)
     L += sec_synthetic(sy, ev)
+    L += sec_recommend(ev, ab, rk, ab5)
     L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
           "The failure mode this dataset invites is deciding *anything* from "
@@ -2034,6 +2145,8 @@ README_BLOCKS = {
     "ranker_fdr": lambda d: "\n".join(
         sec_ranker_fdr(d["rk"])[2:] + sec_depth(d["ab"], d["ab5"], d["rk"])).strip(),
     "invariance": lambda d: "\n".join(sec_invariance(d["iv"])[2:]).strip(),
+    "recommend": lambda d: "\n".join(
+        sec_recommend(d["ev"], d["ab"], d["rk"], d["ab5"])[2:]).strip(),
 }
 
 

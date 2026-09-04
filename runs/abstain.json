@@ -6,7 +6,9 @@
     "source": "runs/null_fdr.json",
     "n_null": 200,
     "n_real": 40,
-    "refits": 0
+    "refits": 0,
+    "select_k": 40,
+    "n_boot": 12
   },
   "environment": {
     "python": "3.11.15",

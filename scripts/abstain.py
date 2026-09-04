@@ -192,6 +192,12 @@ def main():
             "source": a.src,
             "n_null": len(null), "n_real": len(real),
             "refits": 0,
+            # carried through so a report can say which operating point these
+            # rates belong to without re-opening the source JSON
+            "select_k": ((src.get("protocol") or {}).get("agent_cfg") or {})
+                        .get("select_k"),
+            "n_boot": ((src.get("protocol") or {}).get("agent_cfg") or {})
+                      .get("n_boot"),
         },
         "environment": {"python": platform.python_version(),
                         "numpy": np.__version__,

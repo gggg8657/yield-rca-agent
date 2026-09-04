@@ -366,6 +366,18 @@ One number in the table deserves its own sentence: the loop's *selected set* has
 
 **These numbers are synthetic and must never be quoted as real-data results.**
 
+## What to actually do with this
+
+The measurements point at one configuration, and it is not the one that scores best on a slide:
+
+1. **Predict with every sensor -- with one asterisk.** Under the shuffled protocol selection costs AUC monotonically, because the signal is diffuse, so `rf_all` at 0.759 is the model to deploy. The asterisk is that forward in time the ordering reverses and the sparse arms come out ahead; that comparison has 4 origins behind it and its interval includes zero, so it is a reason to monitor and re-measure as wafers accumulate, not a reason to ship the sparse model today.
+2. **Do not ship the suspect list without a null-calibrated bar.** As it stands the loop reports 20.9 suspects and abstains on nothing, and on permuted labels it does the same -- so the list length carries no information about the process. `AgentRCA(report_tau=...)` fixes that: at alpha = 0.05 the report becomes 0.60 sensors and is empty 51.3% of the time. Prediction is untouched either way, so this costs no AUC.
+3. **Consider replacing the ranking core with a univariate ranker.** `univariate (n_boot=40, select_k=5)` reaches 94.3% error control against the loop's 91.6% and reports 2.06 suspects against 0.60, without a permutation-importance pass, a correlation-grouping step or a verification loop. Two caveats on that comparison are in the section above -- the depth was probed for the baseline, and the separation column rewards repeatability -- so read this as the strongest available reason to try the swap and measure, not as a settled result.
+4. **Believe the forward-in-time split, not the shuffled one.** For a go/no-go decision the shuffled-CV number is the optimistic one, and the drift diagnostics say why: era is far more predictable from these sensors than failure is. Plan on retraining, and treat any fixed model as having a shelf life measured in weeks.
+5. **Treat the suspect list as a work order, not a diagnosis.** The invariance screen cannot certify any of these sensors as causal at this sample size, so the useful output is a shortlist of signal *families* worth an engineer's afternoon -- and, with the bar above in place, sometimes no shortlist at all.
+
+The honest summary of the KPI card: on SECOM this pipeline is a decent predictor and an unreliable attributor, its attribution is associational rather than causal, and the agent machinery is not what earns either -- a plain ranker matches or beats it on every axis measured here.
+
 ## Limits
 
 - **No causal ground truth on SECOM**, so nothing here validates the *causal* half of "root-cause analysis" on real data. The synthetic benchmark is a proxy, and its planted structure is additive-logistic, which is kinder than a fab.
