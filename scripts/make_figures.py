@@ -2,7 +2,7 @@
 
     python scripts/make_figures.py
 
-Nine figures, each one answering a question the tables answer more precisely:
+Ten figures, each one answering a question the tables answer more precisely:
 
 * ``fig_secom_auc.png``  -- who beats whom, and by more than the CI?
 * ``fig_sparsity.png``   -- what does selecting fewer sensors cost?
@@ -13,6 +13,7 @@ Nine figures, each one answering a question the tables answer more precisely:
 * ``fig_premise.png``    -- where does the agent loop help, and where does it hurt?
 * ``fig_null_fdr.png``   -- can the drop step tell real causes from permuted labels?
 * ``fig_invariance.png`` -- how big a break would the invariance screen even see?
+* ``fig_ranker_fdr.png`` -- does a plain ranker calibrate better than the loop?
 
 Every value plotted is read from the run JSONs, so the figures cannot drift
 from the tables. Categorical colours are the first three slots of the
@@ -533,6 +534,107 @@ def fig_invariance(iv, out):
     return out
 
 
+def fig_ranker_fdr(rk, out):
+    """Separation against attainable error control, for every ranker arm.
+
+    Two properties decide this comparison and they can disagree, so both are
+    axes. The ceiling tick is the point of the figure: an arm whose support
+    saturates cannot be pushed up the y axis by any choice of alpha, however
+    good its separation looks.
+
+    The non-saturating variants land on top of each other by construction --
+    that *is* their result -- so they are annotated once as a group rather than
+    four times illegibly.
+    """
+    per = rk["per_ranker"]
+    fig, ax = plt.subplots(figsize=(6.9, 4.3))
+    _grid(ax, axis="y")
+    ax.axhline(0.95, color=INK_MUTED, linestyle=(0, (4, 3)), linewidth=1.2,
+               zorder=2)
+
+    var = {k: v for k, v in per.items() if v.get("is_variant")}
+    rest = {k: v for k, v in per.items() if not v.get("is_variant")}
+
+    def xy(v):
+        h = v["heldout_alpha_0.05"]
+        return (v["prob_real_max_exceeds_null_max"], h["null_abstention_heldout"],
+                h["max_attainable_null_abstention"], h["real_reported_mean"])
+
+    for name, v in rest.items():
+        x, y, cap, n = xy(v)
+        agent = name.startswith("agent")
+        col = SERIES["agent"] if agent else SERIES["baseline"]
+        if cap < 0.999:
+            ax.plot([x, x], [y, cap], color=col, linewidth=1.0, alpha=0.5, zorder=3)
+            ax.plot([x], [cap], marker="_", ms=10, color=col, zorder=4)
+        ax.plot([x], [y], marker="o" if agent else "s", ms=9 if agent else 7,
+                color=col, zorder=6, markeredgecolor=SURFACE, markeredgewidth=1.1)
+        ax.annotate(f"{'agent loop' if agent else name}\n{n:.2f} suspects",
+                    xy=(x, y), xytext=(0, -12), textcoords="offset points",
+                    ha="center", va="top", fontsize=8,
+                    color=INK if agent else INK_2, linespacing=1.35)
+
+    if var:
+        xs = [xy(v)[0] for v in var.values()]
+        ys = [xy(v)[1] for v in var.values()]
+        ns = [xy(v)[3] for v in var.values()]
+        for x, y in zip(xs, ys):
+            ax.plot([x], [y], marker="^", ms=7, color=SERIES["control"],
+                    zorder=6, markeredgecolor=SURFACE, markeredgewidth=1.1)
+        # Parked in the empty lower-middle of the axes: the cluster sits in the
+        # busiest corner, and a label beside it lands on its neighbours.
+        lo_x = min(xy(v)[0] for v in per.values())
+        ax.annotate(
+            f"{len(var)} univariate variants at a non-saturating depth\n"
+            f"{min(ys):.0%}-{max(ys):.0%} control, "
+            f"{min(ns):.2f}-{max(ns):.2f} suspects, no ceiling",
+            xy=(min(xs), min(ys) - 0.005),
+            xytext=(lo_x + 0.012, 0.665), textcoords="data",
+            ha="left", va="center", fontsize=8, color=INK, linespacing=1.45,
+            arrowprops=dict(arrowstyle="-", color=INK_MUTED, lw=0.9,
+                            connectionstyle="angle,angleA=0,angleB=90,rad=6"))
+
+    ax.set_xlabel("separation: P(real replicate's support > null replicate's)")
+    ax.set_ylabel("no-cause worlds correctly kept silent")
+    ax.yaxis.set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda v, _: f"{100*v:.0f}%"))
+    lo = min(xy(v)[0] for v in per.values())
+    ax.set_xlim(lo - 0.03, 1.028)
+    ax.set_ylim(0.45, 1.05)
+    ax.text(ax.get_xlim()[0] + 0.004, 0.952, "95% target", fontsize=8,
+            color=INK_2, va="bottom")
+
+    # The verdict is computed, not asserted: does one arm win both axes?
+    best_x = max(per, key=lambda k: xy(per[k])[0])
+    best_y = max(per, key=lambda k: xy(per[k])[1])
+    agent_k = next((k for k in per if k.startswith("agent")), None)
+    if best_x == best_y:
+        winner = "the agent loop" if best_x == agent_k else f"`{best_x}`"
+        sub = (f"one arm wins both: {best_x}"
+               if best_x != agent_k else "the agent loop wins both")
+        title = (f"Separation and attainable control agree, and the agent loop "
+                 f"is not what wins\n{sub}"
+                 if best_x != agent_k else
+                 f"Separation and attainable control agree: {sub}")
+    else:
+        title = ("The two properties disagree, so neither alone picks a winner\n"
+                 f"best separation: {best_x}; best control: {best_y}")
+    ax.set_title(title + "\ntick = the ceiling that arm's statistic allows",
+                 fontsize=10, loc="left", pad=10)
+    _legend_below(fig, [
+        Line2D([], [], marker="s", color=SERIES["baseline"], linestyle="none",
+               ms=7, label="plain ranker, matched settings"),
+        Line2D([], [], marker="^", color=SERIES["control"], linestyle="none",
+               ms=7, label="plain ranker, non-saturating depth"),
+        Line2D([], [], marker="o", color=SERIES["agent"], linestyle="none",
+               ms=8, label="agent loop"),
+    ], ncol=3)
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=str(ROOT / "runs"))
@@ -567,6 +669,9 @@ def main():
     iv = read(runs / "invariance.json")
     if iv and (iv.get("power") or {}).get("ladder"):
         made.append(fig_invariance(iv, out / "fig_invariance.png"))
+    rk = read(runs / "null_fdr_rankers.json")
+    if rk and rk.get("per_ranker"):
+        made.append(fig_ranker_fdr(rk, out / "fig_ranker_fdr.png"))
     for m in made:
         print(f"wrote {m}")
     if not made:

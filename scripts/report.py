@@ -930,7 +930,7 @@ def sec_synthetic(sy, ev=None):
 
 
 def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None,
-                 nf=None, ab=None):
+                 nf=None, ab=None, rk=None):
     """The handful of sentences a reader should leave with, computed not asserted."""
     if not ev:
         return []
@@ -1118,6 +1118,41 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None,
             f"the loop is not re-reporting SECOM's correlation structure under "
             f"the null; it is manufacturing a different answer every time it "
             f"is asked.")
+    if rk and rk.get("per_ranker"):
+        per = rk["per_ranker"]
+        ag_k = next((k for k in per if k.startswith("agent")), None)
+        plain = {k: v for k, v in per.items() if not k.startswith("agent")}
+        if ag_k and plain:
+            def ctl(v):
+                return v["heldout_alpha_0.05"]["null_abstention_heldout"]
+            bc_k = max(plain, key=lambda k: ctl(plain[k]))
+            bc, ag = per[bc_k], per[ag_k]
+            wins_both = (per[bc_k]["prob_real_max_exceeds_null_max"]
+                         >= ag["prob_real_max_exceeds_null_max"]
+                         and ctl(bc) >= ctl(ag))
+            L.append(
+                f"- **And a univariate ranker does the same job better.** "
+                f"Matched to the loop's own bootstrap count and selection "
+                f"depth, plain rankers separate the two worlds better "
+                f"(`univariate` {plain.get('univariate', bc)['prob_real_max_exceeds_null_max']:.3f} "
+                f"vs {ag['prob_real_max_exceeds_null_max']:.3f}) but their "
+                f"support *saturates*, capping their error control below the "
+                f"loop's. Narrow the selection depth so it stops saturating "
+                f"and the cap disappears: `{bc_k}` reaches "
+                f"{pct(ctl(bc))} control against the loop's "
+                f"{pct(ctl(ag))} at a 95% target, separates at "
+                f"{bc['prob_real_max_exceeds_null_max']:.3f}, and still "
+                f"reports {bc['heldout_alpha_0.05']['real_reported_mean']:.2f} "
+                f"suspects against "
+                f"{ag['heldout_alpha_0.05']['real_reported_mean']:.2f}"
+                + (" -- with no permutation-importance pass, no correlation "
+                   "grouping and no verification loop. **The loop has no "
+                   "measured advantage on any axis in this repository: not "
+                   "accuracy, not stability, not separation, not calibratable "
+                   "error control.**" if wins_both else
+                   ", so the two are close on this axis -- and the plain "
+                   "ranker needs no permutation-importance pass, no "
+                   "correlation grouping and no verification loop."))
     if sy and "agent" in sy.get("recovery", {}):
         r = sy["recovery"]["agent"]
         if True:
@@ -1472,12 +1507,65 @@ def sec_ranker_fdr(rk):
             "operating point, not over simplicity in general.", "",
         ]
     elif ctl_gap > 0.02:
+        base = {k: v for k, v in plain.items() if not v.get("is_variant")}
+        var = {k: v for k, v in plain.items() if v.get("is_variant")}
         body += [
-            f"**And it also controls error better**, reaching "
+            f"**And once the operating point stops flattering it, the plain "
+            f"ranker controls error better too.** `{bc_k}` reaches "
             f"{pct(bc['null_abstention_heldout'])} against the loop's "
-            f"{pct(ag_h['null_abstention_heldout'])} at a 95% target, so the "
-            f"loop has no measured advantage on this axis either.", "",
+            f"{pct(ag_h['null_abstention_heldout'])}, at a 95% target -- while "
+            f"still reporting {bc['real_reported_mean']:.2f} suspects against "
+            f"the loop's {ag_h['real_reported_mean']:.2f}, and abstaining on "
+            f"{pct(bc['real_abstention'], 0)} of real replicates against "
+            f"{pct(ag_h['real_abstention'], 0)}.", "",
         ]
+        if base and var:
+            b_k = max(base, key=lambda k: base[k]["heldout_alpha_0.05"]["null_abstention_heldout"])
+            b_h = base[b_k]["heldout_alpha_0.05"]
+            body += [
+                f"That qualifier is the whole result, so it is worth being "
+                f"exact about it. Matched to the agent loop's own settings "
+                f"(`select_k = {base[b_k]['select_k']}` of "
+                f"{int(rk.get('n_eff_sensors', 474))} sensors, "
+                f"`n_boot = {base[b_k]['n_boot']}`), a plain ranker's support "
+                f"**saturates**: its best sensor sits in the top slice of every "
+                f"resample, so the statistic pins at 1.000 on real labels and "
+                f"on "
+                f"{pct(1 - b_h['max_attainable_null_abstention'])} of permuted "
+                f"ones too. No threshold at or below 1.000 excludes those, so "
+                f"`{b_k}` is capped at "
+                f"{pct(b_h['max_attainable_null_abstention'])} control however "
+                f"alpha is set -- below the loop's "
+                f"{pct(ag_h['null_abstention_heldout'])}, which is what made "
+                f"the matched comparison alone look like a win for the "
+                f"architecture.", "",
+                f"Narrowing the selection depth removes the saturation "
+                f"entirely. Every variant row above reaches a "
+                f"{pct(max(v['heldout_alpha_0.05']['max_attainable_null_abstention'] for v in var.values()), 0)} "
+                f"ceiling and lands within "
+                f"{abs(0.95 - bc['null_abstention_heldout']) * 100:.1f} points "
+                f"of nominal, without a permutation-importance pass, a "
+                f"correlation-grouping step, or a verification loop. The "
+                f"agent loop's apparent advantage was a property of the "
+                f"operating point it was compared at, not of the "
+                f"plan/attribute/verify architecture.", "",
+                "**So the loop has no measured advantage on any axis in this "
+                "repository.** It loses on held-out AUC, it loses on top-5 "
+                "selection stability, it loses on how well its confidence "
+                "separates signal from noise, and it loses on how much "
+                "false-discovery control that confidence can be calibrated "
+                "to. The one place it wins remains the synthetic generator, "
+                "where its premise -- that a few sensors dominate -- is true "
+                "by construction.", "",
+                "*This paragraph replaces an earlier conclusion in this "
+                "repository's history.* The matched-settings comparison alone "
+                "showed the loop as the only arm able to carry a "
+                "false-discovery guarantee, and that was written up as its "
+                "first genuine win. The follow-up run in the table above "
+                "refuted it. Both are in `critique_log.md`; the earlier "
+                "reading was wrong because it compared one operating point "
+                "and generalised to an architecture.", "",
+            ]
     else:
         body += [
             f"**Error control is comparable too**: "
@@ -1740,7 +1828,7 @@ def build(runs: Path):
     ab = read_json(runs / "abstain.json")
     iv = read_json(runs / "invariance.json")
     rk = read_json(runs / "null_fdr_rankers.json")
-    L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab)
+    L += sec_headline(ev, st, sy, sw, prof, dr, rsw, nf, ab, rk)
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
@@ -1791,7 +1879,7 @@ README_BLOCKS = {
     "limits": lambda d: "\n".join(sec_limits(d["prof"], d["st"])[2:]).strip(),
     "headline": lambda d: "\n".join(
         sec_headline(d["ev"], d["st"], d["sy"], d["sw"], d["prof"], d["dr"],
-                     d["rs"], d["nf"], d["ab"])[2:]).strip(),
+                     d["rs"], d["nf"], d["ab"], d["rk"])[2:]).strip(),
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),

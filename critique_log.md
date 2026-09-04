@@ -516,3 +516,90 @@ produced all weekend.
 
 **Run:** same script, `--variants`, output shares
 `runs/null_fdr_rankers.json`.
+
+---
+
+## Turn 6 (2026-09-04) — H3 verdict: confirmed on every clause
+
+`scripts/null_fdr_rankers.py --variants`, 1,680 replicates over 7 arms,
+31.9 min → `runs/null_fdr_rankers.json`. Log: `runs/null_fdr_rankers.log`.
+
+| arm | P(real>null) | τ(0.05) | no-cause worlds silent | ceiling | suspects | abstains |
+|---|---|---|---|---|---|---|
+| `univariate` B=40, k=5 | **1.000** | 0.622 | **94.3%** | **100%** | 2.06 | 0% |
+| `univariate` B=100, k=5 | 1.000 | 0.578 | 94.1% | 100% | 2.13 | 0% |
+| `univariate` B=40, k=10 | 1.000 | 0.751 | 94.2% | 100% | 2.70 | 0% |
+| `univariate` B=12, k=5 | 1.000 | 0.674 | 93.0% | 100% | 2.21 | 0% |
+| `univariate` (matched, k=40) | 0.943 | 1.000 | 88.5% | 88.5% | 4.10 | 0% |
+| `rf_impurity` (matched) | 0.920 | 1.000 | 84.0% | 84.0% | 2.67 | 0% |
+| **agent (full loop)** | 0.873 | 0.909 | 91.6% | 98.5% | 0.60 | 51% |
+| `logreg_coef` (matched) | 0.785 | 1.000 | 57.0% | 57.0% | 2.92 | 0% |
+
+H3 predicted a univariate ranker at a non-saturating depth would **match or beat
+the loop's 91.6% control and still report more than 0.60 suspects**. It does
+both, and it also takes the separation column outright:
+
+* control **94.3%** vs 91.6%, and the ceiling goes from 88.5% to 100%, so the
+  cap that produced the loop's apparent advantage is gone entirely;
+* **2.06** suspects vs 0.60, abstaining on **0%** of real replicates vs 51%;
+* separation **1.000** vs 0.873.
+
+The alternative — that permutation-importance-plus-verification produces a
+better-shaped uncertainty estimate no reparameterisation of a univariate ranker
+reproduces — is dead. What saturated was the *selection depth*, not the ranker:
+"top 40 of 474 in every one of 12 resamples" is easy, "top 5 of 474 in every one
+of 40" is not, and the fix is one integer.
+
+**So the agent loop has no measured advantage on any axis in this repository.**
+Accuracy (−0.042 paired vs `rf_all`), top-5 stability (22.3% vs `univariate`'s
+46.1%), separation (0.873 vs 1.000), and calibratable error control (91.6% vs
+94.3%). The only place it wins remains the synthetic generator, where its
+premise is true by construction.
+
+### The correction, stated plainly
+
+Turn 5 concluded that this was "the first axis in this repository on which the
+verification machinery earns anything". **That conclusion was wrong**, and it
+was committed to `RESULTS.md` and the README before this run refuted it (commit
+`b4813a4`). The error was not a miscomputation: every number in it was correct.
+The error was generalising from one operating point to an architecture, having
+compared the loop only against rankers pinned at a selection depth that made
+their statistic degenerate.
+
+It is worth naming why that happened, because the mechanism is more general than
+this repo. The split verdict was the only good news the architecture had
+produced all weekend, and I wrote it up in the same turn I found it. The
+protective habit that caught it was structural rather than virtuous: the report
+section was written with data-driven branches, so regenerating against the new
+JSON flipped the conclusion automatically and left a diff instead of a stale
+sentence. `RESULTS.md` now carries an explicit note that it replaces an earlier
+conclusion, rather than silently reading as though the earlier one never
+existed.
+
+### What this does not show
+
+Two limits, stated so the negative result is not over-claimed either:
+
+* **The comparison is of *ranking statistics under bootstrap resampling*, not of
+  everything the agent loop does.** The loop also groups correlated sensors and
+  produces a written report; neither is scored here, and neither could be by
+  this protocol.
+* **`select_k` was never tuned for the agent loop the way it was probed for
+  univariate.** The pre-registered `select_k = 40` is the loop's own operating
+  point, and the honest question this raises is whether the loop at `select_k =
+  5` would also improve. `[not measured]` — and it is the obvious next ablation,
+  logged below as H4. If the loop improves too, the finding narrows to "selection
+  depth dominates ranker choice"; if it does not, the finding stands as written.
+
+> **H4.** Selection depth, not ranker choice, drives calibratable error control.
+> Running the agent loop at `select_k = 5` (its only change) will move its
+> control toward the univariate variants' 93–94% band, and the residual gap to
+> `univariate` at the same depth will be smaller than the 2.7-point gap measured
+> at mismatched depths.
+
+**What distinguishes H4 from the alternative.** The alternative is that the
+loop's control is limited by its permutation-importance estimator rather than by
+its depth, predicting little movement when depth changes. H4 predicts the loop
+climbs into the same band. Either way the univariate arm has already cleared it,
+so H4 cannot rescue the architecture — it decides only *why* it loses, which is
+the part a reader should be able to act on.
