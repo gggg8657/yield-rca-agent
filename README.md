@@ -33,6 +33,7 @@ narrating the same tool output would add prose rather than evidence.
 - **The AUC KPI is met, by the baseline.** A plain random forest with fold-internal cleaning and median imputation scores **0.759** [0.739, 0.779] ROC-AUC over 25 folds of repeated stratified CV, so the >= 0.75 target is **met** before any agent runs. That is squarely inside the 0.70-0.80 band published for SECOM; anything far above it on this dataset is a leak, not a result.
 - **The agent loop does not beat that baseline -- it loses to it.** Same folds, paired per fold: **-0.042 [-0.058, -0.025]** AUC (4 folds better, 21 worse, Wilcoxon p = 6.4e-05). At its pre-registered operating point the loop reaches 0.717 and misses the KPI on its own, and it does not separate from a univariate top-25 selection at the same sparsity (-0.012 [-0.028, +0.004], an interval that includes zero). The plan/verify machinery is not what is buying the number.
 - **Sparsity is the price, and it is not negotiable.** Sweeping the loop's settings, AUC tracks how many sensors survive. The leanest configuration whose paired CI still reaches the baseline is `agent_operating_model` at -0.0262 [-0.0524, +0.0000], keeping about 25 sensors -- but that CI only just touches zero, so read it as a boundary case rather than a tie; the leanest *unambiguous* tie keeps about 45. The loop can match a full-sensor forest, but only by declining to be a shortlist -- every setting that returns a list short enough for an engineer to work through is measurably worse.
+- **The top-5 stability KPI is not met on the protocol it should be scored on.** Under the definition fixed in `yieldrca/stability.py` -- mean pairwise overlap of the top 5, re-derived from scratch on each of 200 bootstrap resamples -- the loop scores **22.3%** (22.8% after grouping sensors correlated above |r| = 0.99) against a >= 80% target and a 1.1% random-ranker floor. Across 80%-overlapping CV training folds -- a much gentler shake of the same data -- it reads 37.2%. Both are reported; the harder one is the headline. With 104 fails, which five of 474 sensors come out on top is barely determined.
 - **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Repeating the exercise at every origin -- train on the past, test on the next block of wafers -- puts the best arm at 0.656 (`agent_rf`), so this is not one unlucky split. Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
 - **And the drift is measured, not assumed.** Label each wafer by *era* instead of outcome -- early 70% versus late 30% -- and the same pipeline separates the two eras from the sensors alone at **0.993** AUC (0.516 with the era label shuffled). The process data says far more about *when* a wafer was made than about *whether it failed*: 70.7% of sensors shift significantly between the first and last time block, and the fail rate itself runs 3.5% to 14.0% across blocks (chi-square p = 1e-07). On a non-stationary process, "the top 5 causes" is not a fixed quantity measured noisily -- it is a quantity that moves while you measure it.
 - **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding. Repeating the protocol at five block counts (below) keeps the sign at every one but puts the median effect at +0.017 rather than +0.071, and no single interval excludes zero.
@@ -65,7 +66,19 @@ data, and it is never carried over. A ranked SECOM suspect list is a
 ## KPI scorecard
 
 <!-- BEGIN:kpi -->
+The catalog target for this project is `SECOM real-data AUC >= 0.75` and `top-5 cause stability >= 80%`. Scored honestly:
 
+| KPI | measured on | value | verdict |
+|---|---|---|---|
+| SECOM ROC-AUC >= 0.75 | best plain baseline (`rf_all`) | 0.759 [0.739, 0.779] | **met** (point estimate; CI spans it) |
+| SECOM ROC-AUC >= 0.75 | agent loop (`agent_rf`) | 0.717 [0.699, 0.735] | **not met** |
+| top-5 cause stability >= 80% | agent loop, pairwise overlap, bootstrap | 22.3% | **not met** |
+| top-5 cause stability >= 80% | agent loop, cluster-aware pairwise, bootstrap | 22.8% | **not met** |
+| top-5 cause stability >= 80% | agent loop, pairwise, CV training folds (the gentler perturbation -- shown so the choice of protocol is visible) | 37.2% | **not met** |
+
+Read together: the prediction KPI is met -- but by the plain baseline, not by the agent loop, which lands at 0.717 and misses it, and the stability KPI is missed by 58 points on the primary bootstrap protocol. The one-line summary is that on SECOM this pipeline is a usable *predictor* and an unreliable *root-cause attributor*, and the second half of that sentence is the finding.
+
+One caveat on the first row, stated rather than buried: the point estimate 0.759 clears 0.75, but the 95% CI over folds runs [0.739, 0.779] and so includes values below the target. "Met" here means the mean of 25 folds is above the line, not that the line is cleared with confidence.
 <!-- END:kpi -->
 
 ## The data, as it actually arrives
@@ -244,10 +257,29 @@ Two perturbation schemes, and the choice matters more than any modelling decisio
 | `univariate` | per-sensor \|AUC - 0.5\| | 46.1% | 46.0% | 61.1% | 73.7% | 73.7% |
 | `logreg_coef` | \|standardised logistic coefficient\| | 42.6% | 42.6% | 55.9% | 68.8% | 68.8% |
 | `rf_impurity` | random-forest impurity importance | 36.5% | 36.6% | 49.7% | 53.0% | 53.0% |
-| `agent_no_corr` | attribute -> verify -> drop, correlation grouping off | 22.1% | 22.6% | 35.0% | -- | -- |
+| `agent` | full agent loop: attribute -> correlate -> verify -> drop | 22.3% | 22.8% | 36.0% | 37.2% | 37.3% |
+| `agent_no_corr` | attribute -> verify -> drop, correlation grouping off | 22.1% | 22.6% | 35.0% | 35.7% | 35.9% |
 | `perm_only` | SensorAgent only: screen + held-out permutation AUC drop | 20.0% | 20.6% | 32.8% | 34.1% | 34.3% |
 
 A uniformly random ranker scores 1.1% raw (5 of 474 surviving sensors) and 1.4% cluster-aware (5 of 370 clusters), so every row is far clear of chance.
+
+The full agent loop reaches **22.3%** pairwise overlap under bootstrap resampling (22.8% cluster-aware) and 37.2% across CV training folds. Against the >= 80% KPI that is **not met** on the primary protocol, **not met** cluster-aware, and **not met** under the gentler CV-fold perturbation.
+
+The most stable ranker in the table is `univariate` -- the plan/verify machinery does not buy stability over simply ranking each sensor on its own, which is the same conclusion the AUC table reaches from the other direction.
+
+**Which part of the loop does the stability work?** The three rows form a ladder, each step adding one mechanism, so each difference isolates one thing rather than two:
+
+| ranker | mechanism added | pairwise (bootstrap) | step |
+|---|---|---|---|
+| `perm_only` | screen + held-out permutation only | 20.0% | -- |
+| `agent_no_corr` | + bootstrap verify-and-drop | 22.1% | +2.1% |
+| `agent` | + correlation grouping | 22.3% | +0.2% |
+
+So verification is worth +2.1% of top-5 agreement and grouping +0.2%. Only one of the two steps is doing measurable work here. Note also that the raw and cluster-aware columns barely differ across the whole table, which says the top 5 mostly are *not* drawn from the near-duplicate families that motivated grouping -- the instability is between genuinely different sensors.
+
+Two different gaps are visible here and they should not be conflated. The first is between rankers: `univariate` is +23.7% above the full loop, so *choice of ranker matters a great deal* -- held-out permutation importance, scored on an inner split holding roughly 25 positives, is simply a noisier statistic than a univariate AUC or a fitted coefficient. That is the same finding the sensitivity sweep reached from the accuracy side, and it is actionable: the loop's attribution mode is a parameter.
+
+The second gap is the one no ranker closes. Even `univariate`, the most stable thing in the table, sits 34% short of the 80% KPI. Resampling 1,567 wafers with replacement leaves out about 37% of them, so at this class balance each replicate sees a different ~65 fails, and which five of 474 weakly informative sensors come out on top is not determined at that sample size. The consensus column says the same from the other side: some sensors recur far more often than chance, but not the *same five* run to run. A better ranker would narrow the first gap; only more failed wafers narrows the second.
 <!-- END:stability -->
 
 ![top-5 stability by ranker, under both perturbation schemes](assets/fig_stability.png)

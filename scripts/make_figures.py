@@ -328,12 +328,17 @@ def fig_premise(ev, sy, st, out):
                      xerr=[[d["mean"] - d["ci_lo"]], [d["ci_hi"] - d["mean"]]],
                      fmt="none", ecolor=INK_2, elinewidth=1.5, capsize=3,
                      capthick=1.5, zorder=5)
-        ha = "left" if d["mean"] > 0 else "right"
-        off = 0.004 if d["mean"] > 0 else -0.004
-        axl.text(d["ci_hi"] + off if d["mean"] > 0 else d["ci_lo"] + off, i,
-                 f"{d['mean']:+.3f}", va="center", ha=ha, fontsize=8.5,
-                 color=INK)
+        # labels sit on the far side of the interval from zero, and the
+        # limits are widened to make room rather than letting them collide
+        pos = d["mean"] > 0
+        axl.text(d["ci_hi"] + 0.004 if pos else d["ci_lo"] - 0.004, i,
+                 f"{d['mean']:+.3f}", va="center",
+                 ha="left" if pos else "right", fontsize=8.5, color=INK)
     axl.axvline(0, color=INK_MUTED, linewidth=1.1, zorder=4)
+    span = max(abs(d["ci_lo"]) for d in (d_real, d_syn)) \
+        + max(abs(d["ci_hi"]) for d in (d_real, d_syn))
+    axl.set_xlim(min(d_real["ci_lo"], d_syn["ci_lo"]) - 0.32 * span,
+                 max(d_real["ci_hi"], d_syn["ci_hi"]) + 0.32 * span)
     axl.set_yticks([0, 1], labels, fontsize=8.5)
     axl.set_ylim(-0.6, 1.6)
     axl.set_xlabel("paired AUC: agent loop minus full-sensor forest")
@@ -351,9 +356,11 @@ def fig_premise(ev, sy, st, out):
                 linewidth=1.2, zorder=4)
     axr.text(KPI_STAB + 0.01, 1.42, f"KPI {KPI_STAB:.0%}", fontsize=8,
              color=INK_2, va="center", ha="left")
-    axr.set_yticks([0, 1], ["", ""])
+    axr.set_yticks([])            # the left panel already names the rows
     axr.set_ylim(-0.6, 1.6)
-    axr.set_xlim(0, 1.05)
+    axr.set_xlim(0, 1.12)
+    axr.xaxis.set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda v, _: f"{100*v:.0f}%"))
     axr.set_xlabel("top-5 stability (mean pairwise overlap, bootstrap)")
     axr.set_title("Stability: same story", fontsize=10, loc="left", pad=8)
 

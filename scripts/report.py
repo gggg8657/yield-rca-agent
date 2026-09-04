@@ -699,9 +699,10 @@ def sec_sweep(sw):
     return body
 
 
-def sec_stability(st):
+def sec_stability(st, prof=None):
     if not st:
         return []
+    n_wafers = f"{prof['n_wafers']:,}" if prof else "the"
     rows = []
     # a ranker mid-measurement may have bootstrap but not yet cv_train
     ranked = {k: v for k, v in st["rankers"].items() if "bootstrap" in v}
@@ -827,16 +828,30 @@ def sec_stability(st):
                   f"different sensors.", "",
             ]
     if not boot_ok:
+        top_v = ranked[best_raw]["bootstrap"]["raw"]["pairwise_overlap"]
+        gap_ranker = top_v - b["raw"]["pairwise_overlap"]
+        gap_kpi = KPI_STABILITY - top_v
         body += [
-            f"The gap to the KPI is not a tuning failure. Resampling 1,567 "
-            f"wafers with replacement leaves out about 37% of them, which at "
-            f"this class balance means each replicate sees a different ~65 "
-            f"fails; the ordering of {st['effective_sensors']} weakly "
-            f"informative sensors is not determined at that sample size. The "
-            f"consensus column shows the same thing from the other side -- "
-            f"some sensors do recur far more often than chance, but not the "
-            f"*same five* run to run. More failed wafers would move this "
-            f"number; a better ranker will not.", "",
+            f"Two different gaps are visible here and they should not be "
+            f"conflated. The first is between rankers: `{best_raw}` is "
+            f"{gap_ranker:+.1%} above the full loop, so *choice of ranker "
+            f"matters a great deal* -- held-out permutation importance, scored "
+            f"on an inner split holding roughly 25 positives, is simply a "
+            f"noisier statistic than a univariate AUC or a fitted "
+            f"coefficient. That is the same finding the sensitivity sweep "
+            f"reached from the accuracy side, and it is actionable: the loop's "
+            f"attribution mode is a parameter.", "",
+            f"The second gap is the one no ranker closes. Even `{best_raw}`, "
+            f"the most stable thing in the table, sits {gap_kpi:.0%} short of "
+            f"the {KPI_STABILITY:.0%} KPI. Resampling {n_wafers} wafers with "
+            f"replacement leaves out about 37% of them, so at this class "
+            f"balance each replicate sees a different ~65 fails, and which "
+            f"five of {st['effective_sensors']} weakly informative sensors "
+            f"come out on top is not determined at that sample size. The "
+            f"consensus column says the same from the other side: some "
+            f"sensors recur far more often than chance, but not the *same "
+            f"five* run to run. A better ranker would narrow the first gap; "
+            f"only more failed wafers narrows the second.", "",
         ]
     return body
 
@@ -1173,7 +1188,7 @@ def build(runs: Path):
     L += sec_drift(dr)
     L += sec_rolling_sweep(rsw, ev)
     L += sec_sweep(sw)
-    L += sec_stability(st)
+    L += sec_stability(st, prof)
     L += sec_synthetic(sy, ev)
     L += sec_limits(prof, st)
     L += ["## Leakage controls", "",
@@ -1216,7 +1231,8 @@ README_BLOCKS = {
     "kpi": lambda d: "\n".join(sec_kpi(d["ev"], d["st"], d["prof"])[2:]).strip(),
     "dataset": lambda d: "\n".join(sec_dataset(d["prof"])[2:]).strip(),
     "secom_auc": lambda d: "\n".join(sec_secom_auc(d["ev"])[2:]).strip(),
-    "stability": lambda d: "\n".join(sec_stability(d["st"])[2:]).strip(),
+    "stability": lambda d: "\n".join(
+        sec_stability(d["st"], d["prof"])[2:]).strip(),
     "synthetic": lambda d: "\n".join(
         sec_synthetic(d["sy"], d["ev"])[2:]).strip(),
     "sweep": lambda d: "\n".join(sec_sweep(d["sw"])[2:]).strip(),
