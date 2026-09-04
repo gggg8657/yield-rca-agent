@@ -17,17 +17,23 @@ attribute / verify / drop agent loop by a margin whose paired 95% interval
 excludes zero, so the agent architecture costs accuracy rather than buying it.
 Second, and more seriously, we show that the loop's advertised safeguard --
 suspects failing a bootstrap stability check are dropped -- has a
-false-discovery rate of 1.0 under a label-permutation null: it reports root
-causes on every replicate of a dataset in which no sensor carries any
-information about failure, and its confidence scores on real labels are
-[separation result] from its confidence scores on noise. We trace this to an
-architectural property rather than a hyperparameter, propose a null-calibrated
-abstention rule with family-wise error control, and measure what enforcing it
-costs. Third, we ask whether the surviving suspects support a causal reading via
-an invariance screen across production periods, and report a negative result
-with its power curve attached: at 104 failed wafers the screen cannot detect a
-broken association smaller than [power result], so the pipeline's output is
-associational and we say so. Finally we contrast all of this against a synthetic
+false-discovery rate of 1.0 under a label-permutation null: across 200
+replicates of a dataset in which no sensor carries any information about
+failure, it named 2,743 root causes and abstained on none. The cause is not the
+never-return-empty-handed guard the code invites one to blame -- that fired on
+0.0% of replicates -- but a stability threshold set an order of magnitude below
+what noise clears. The underlying statistic is nonetheless informative
+(P(real > null) = 0.873), so we derive a null-calibrated abstention rule with
+family-wise control and price it under held-out calibration: at alpha = 0.05 the
+honest report is 0.60 suspects and empty 51% of the time, against the 20.9 the
+pipeline prints. Third, we ask whether the surviving suspects support a causal
+reading via an invariance screen across production periods. Exactly one of 22
+associated sensors is rejected -- and it is the one the loop ranks first in
+25 of 25 folds -- while the remaining 21 are not invariant but untestable, which
+we establish by attaching the screen's power curve: at 104 failed wafers it
+cannot see a break smaller than roughly 0.15 AUC, and the sensors' entire signal
+is smaller than that. The pipeline's output is therefore associational and we
+say so. Finally we contrast all of this against a synthetic
 generator with known causes, where the same loop wins on both accuracy and
 stability -- locating the failure precisely in the premise that a few sensors
 dominate, rather than in the implementation.
@@ -169,13 +175,37 @@ distribution decides whether that threshold is a decision or a formality.
 ### 4.3 Result
 
 Generated into `RESULTS.md` §"Does the loop invent root causes when there are
-none?" from `runs/null_fdr.json`.
+none?" from `runs/null_fdr.json`; 200 permuted and 40 real replicates, 31.5 min
+on 16 CPU workers.
 
-The result to write up here has three parts: the abstention rate on the null,
-the false-discovery rate given a non-empty report, and
-P(real replicate's best support > null replicate's best support) as the
-common-language measure of whether the loop's own confidence knows the
-difference.
+| | permuted labels | real labels |
+|---|---|---|
+| suspects reported per replicate | 13.7 | 20.9 |
+| cleared the threshold on merit | 13.7 | 21.1 |
+| abstention rate | 0.0% | 0.0% |
+| never-empty fallback fired | 0.0% | 0.0% |
+| largest bootstrap support | 0.703 | 0.873 |
+
+**2,743 false discoveries over 200 replicates; FDR of the reported list = 1.0;
+abstention rate 0.** The loop never once declined to name a cause on data with
+no causes in it.
+
+Two of our own predictions failed, and both failures are informative. We
+expected the never-empty guards to be the mechanism; they fired on 0.0% of
+replicates and were never needed, because `stability_min = 0.3` is itself far
+below the noise floor -- a sensor need only reach the top 40 of a 60-sensor pool
+in 4 of 12 bootstrap replicates. And we expected the null and real support
+distributions to overlap; they separate at P(real > null) = 0.873
+(Mann-Whitney p = 1.6e-14). The second failure is what makes §5 worth writing:
+had the statistic been uninformative, no threshold could have rescued it and the
+attribution step itself would have needed replacing.
+
+**The null is not unfairly easy.** The competing explanation is that permuting
+labels leaves the sensor correlation structure intact, so the loop reports that
+structure rather than inventing. Then null replicates would agree with each
+other. They agree on 0.014 of their top-5 against a random-ranker floor of
+0.011, having named 417 of 474 sensors at least once across the run. The
+invented causes are fresh each time.
 
 ### 4.4 Why this is architecture, not tuning
 
@@ -202,15 +232,31 @@ an asymptotic argument that its bootstrap does not satisfy.
 
 ### 5.2 What it costs
 
-`[not measured]` -- this is the change queued for the next run: implement
-abstention as a pipeline option, then measure (a) that the null abstention rate
-rises to the intended `1 - alpha`, and (b) what fraction of real-label
-replicates return an empty report, which is the price of the guarantee.
+Calibration is held out: fitting `tau` and measuring abstention on the same
+replicates returns `1 - alpha` by construction, so the null replicates are
+halved, `tau` is fitted on one half and every rate read off the other, averaged
+over both directions and 400 random partitions. No model is refitted --
+everything is a function of the supports already recorded.
 
-The honest framing is that this converts an unfalsifiable claim ("unstable
-suspects are dropped") into a falsifiable one with a knob, and that the knob's
-setting is a business decision about the cost of a wasted engineering
-investigation versus a missed cause.
+| alpha | tau | held-out null silent | SECOM silent | SECOM suspects |
+|---|---|---|---|---|
+| 0.10 | 0.842 | 82.0% (target 90%) | 23.4% | 1.18 |
+| 0.05 | 0.910 | 91.6% (target 95%) | 51.3% | 0.60 |
+| 0.01 | 0.959 | 97.7% (target 99%) | 78.8% | 0.22 |
+| none | -- | 0.0% | 0.0% | 20.95 |
+
+Two imperfections in the rule, both reported rather than smoothed. It
+**under-abstains** -- 91.6% against a nominal 95% -- because `tau` is a point
+estimate of an upper quantile from 100 replicates and such estimates are biased
+low; the remedy is more null replicates or an upper confidence bound on the
+quantile. And the bar sits on a **13-point grid**, since support is a fraction
+of `n_boot = 12`, which is why alpha = 0.01 buys little over alpha = 0.05.
+
+This converts an unfalsifiable claim ("unstable suspects are dropped") into a
+falsifiable one with a knob, and moves the deliverable from "your five root
+causes" to "at most one or two, often none, and the reason why". Where alpha
+should sit is a business question about the cost of a wasted investigation
+against a missed cause, not a statistical one.
 
 ---
 
@@ -259,9 +305,28 @@ flagged non-invariant" can be read as "no break larger than X", with X measured.
 Reporting an invariance null result without this is how a powerless test gets
 written up as evidence of causality.
 
-**Anticipated conclusion:** the pipeline reports associational suspects, the
-data cannot support upgrading that, and the repo says so wherever suspects are
-named. This is a better outcome than an unearned causal claim.
+**Result.** 22 of 474 sensors are associated with failure (BH FDR 0.05, exact
+permutation, B = 20,000). Exactly one is rejected as non-invariant:
+`sensor_059`, per-period AUCs 0.56 / 0.77 / 0.86 / 0.52 / 0.49, I-squared 0.82,
+BH p = 0.012 -- and it is the sensor the loop ranks in its top 5 in **25 of 25**
+cross-validation folds. Its association is strong in the middle of the record
+and absent at the end, which is the signature of a period-specific artefact and
+exactly what `runs/drift.json` predicts is common here.
+
+The other 21 sensors are **untestable, not invariant**, and the power ladder is
+what licenses that distinction. Injected sensors carrying a known break are
+detected 14% / 23% / 52% / 79% / 95% of the time at first-period AUCs of
+0.55 / 0.60 / 0.65 / 0.70 / 0.75; SECOM's associated sensors carry
+|AUC - 0.5| of 0.088 to 0.192, median 0.114. Their entire signal is smaller than
+the break the screen needs to see. Note the direction: power rises with
+association strength, so the sensors the test can adjudicate are precisely the
+ones the pipeline is most confident about -- and the single adjudicable one
+failed.
+
+**Conclusion.** The pipeline reports associational suspects, the data cannot
+upgrade that, and the artefact says so wherever suspects are named. This is a
+better outcome than an unearned causal claim, and it is a stronger negative
+result than an unpowered null would have been.
 
 ---
 

@@ -397,3 +397,49 @@ the leak audit in Turn 1 looked for mechanisms rather than assuming one from the
 number. I have not found a published false-discovery rate for agent-based RCA
 attribution to compare the 1.0 against; if one exists it belongs in a separate
 column here, and until I have read it this cell is `[not measured]`.
+
+---
+
+## Turn 4 (2026-09-04) — H2, written before the run
+
+Every negative result so far compares the agent loop to a plain baseline on
+*accuracy* (loses, −0.042 paired) or on *stability* (loses, 22.3% against
+`univariate`'s 46.1%). The new false-discovery axis has no such comparison yet,
+and it is the one axis where the loop's extra machinery — bootstrap
+verification specifically — is supposed to be doing the work. So:
+
+> **H2.** The agent loop's bootstrap-support statistic is no better calibrated
+> against a no-causal-sensor null than the same statistic computed from a plain
+> univariate ranker. Specifically, P(real max support > null max support) will be
+> no higher for the agent loop than for univariate bootstrap selection, and the
+> null-calibrated threshold will not buy the agent loop a longer honest report.
+
+**Why this is the right test and not a rhetorical one.** "FDR = 1.0" is trivially
+true of any procedure that always emits a top-5, univariate included, so
+comparing raw FDRs is uninformative. What is informative is the *separation* the
+statistic achieves — how well its value distinguishes a world with causes from
+one without — because that is what decides how much of a report survives
+calibration. If univariate matches or beats the loop at 0.873, then the
+VerifierAgent's bootstrap machinery is not earning its keep on the one axis
+built specifically for it, and the loop has now lost on accuracy, stability and
+calibration.
+
+**What would distinguish H2 from the alternative.** The alternative is that
+permutation-importance attribution inside a bootstrap is a genuinely better
+signal-detector than univariate ranking, just a worse *point* selector — which
+would show up as the loop separating clearly better (say ≥0.95 against
+univariate's 0.873) and supporting a longer report at the same α. Both are
+single numbers from the same protocol, so the comparison cannot be argued.
+
+**The confound I have to control, or the comparison is worthless.** The two
+procedures must be compared at the same bootstrap count and the same reporting
+depth, or a difference in separation is just a difference in how many bootstrap
+draws went into the statistic. The univariate arm therefore uses the loop's own
+`n_boot = 12` and `select_k = 40` from `AGENT_CFG` rather than a convenient
+number, and both arms are scored with the identical `max` statistic and the
+identical held-out τ calibration from `scripts/abstain.py`.
+
+**Run:** `scripts/null_fdr_rankers.py`, same 200 permuted + 40 real replicate
+structure, output `runs/null_fdr_rankers.json`. Cheap — a univariate screen is
+474 rank-AUCs rather than a permutation-importance pass, so this is minutes
+rather than the 31.5 min the agent arm took.
