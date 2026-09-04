@@ -51,10 +51,16 @@ class SensorCleaner(BaseEstimator, TransformerMixin):
         reason[all_missing & ~drop] = "all_missing"
         drop |= all_missing
 
-        with np.errstate(invalid="ignore"):
-            lo = np.nanmin(np.where(nan, np.nan, X), axis=0)
-            hi = np.nanmax(np.where(nan, np.nan, X), axis=0)
-        const = ~drop & np.isclose(lo, hi, rtol=0, atol=0, equal_nan=True)
+        # only ask for min/max where at least one value is observed, so the
+        # all-missing columns just dropped do not raise an All-NaN warning
+        lo = np.zeros(p)
+        hi = np.zeros(p)
+        live = np.flatnonzero(~drop)
+        if len(live):
+            sub = np.where(nan[:, live], np.nan, X[:, live])
+            lo[live] = np.nanmin(sub, axis=0)
+            hi[live] = np.nanmax(sub, axis=0)
+        const = ~drop & (lo == hi)
         reason[const] = "constant"
         drop |= const
 

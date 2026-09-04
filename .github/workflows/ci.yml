@@ -1,7 +1,8 @@
 name: ci
 on: [push, pull_request]
 jobs:
-  smoke:
+  offline:
+    name: numpy-only path
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -10,3 +11,22 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: PYTHONPATH=. python tests/test_smoke.py
+      - run: PYTHONPATH=. python demo_smoke.py
+
+  real:
+    name: sklearn path + report freshness
+    runs-on: ubuntu-latest
+    env:
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-full.txt
+      - name: real-data path (incl. the label-permutation leak canary)
+        run: PYTHONPATH=. python tests/test_real.py
+      - name: RESULTS.md and the README blocks match runs/*.json
+        run: python scripts/report.py --check

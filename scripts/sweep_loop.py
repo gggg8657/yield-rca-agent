@@ -63,7 +63,7 @@ def main():
             arms.append(Arm(
                 f"agent_{tag}_{attr}",
                 (lambda o=over, at=attr: agent("rf", attribution=at, **o)),
-                f"agent loop [{tag}] attribution={at}", "agent", extras=_extras,
+                f"agent loop [{tag}] attribution={attr}", "agent", extras=_extras,
                 meta={"tag": tag, "attribution": attr, **over}))
 
     t0 = time.time()
