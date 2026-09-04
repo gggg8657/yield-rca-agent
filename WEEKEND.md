@@ -6,7 +6,7 @@ every number below is regenerated into [`RESULTS.md`](RESULTS.md) by
 `scripts/report.py` from a JSON in `runs/`, and `scripts/report.py --check`
 fails CI if a document and a JSON disagree.*
 
-Last updated: Friday 2026-09-04, ~15:00.
+Last updated: Friday 2026-09-04, ~17:00.
 
 ---
 
@@ -49,7 +49,7 @@ not met on any protocol.**
 
 ---
 
-## The four new results
+## The five new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -58,10 +58,12 @@ run the whole loop, and every sensor it names is false by construction. Over 200
 such replicates it named **2,743** and abstained **0** times.
 
 I predicted the cause was the two `if not surv: surv = reps[:5]` guards in
-`estimator.py`. **They fired on 0.0% of replicates.** The real cause is that
-`stability_min = 0.3` is far too low: a sensor need only reach the top 40 of a
-60-sensor pool in 4 of 12 bootstrap replicates, which noise does routinely, and
-13.7 noise sensors clear it unaided.
+`estimator.py`. **At the pre-registered `select_k = 40` they fired on 0.0% of
+replicates.** The cause there is that `stability_min = 0.3` is far too low: a
+sensor need only reach the top 40 of a 60-sensor pool in 4 of 12 bootstrap
+replicates, which noise does routinely, and 13.7 noise sensors clear it unaided.
+(Result 5 shows this diagnosis is depth-specific: narrow the depth and the guard
+becomes the whole story.)
 
 I also predicted the null and real support distributions would overlap. They do
 not — P(real > null) = **0.873**, Mann-Whitney p = 1.6e-14. Being wrong there is
@@ -133,6 +135,40 @@ no correlation grouping and no verification loop. **So the loop has no measured
 advantage on any axis here.** `RESULTS.md` carries an explicit note that this
 replaces the earlier conclusion rather than quietly overwriting it.
 
+### 5. Why it loses is now localised — and a guard that changes roles
+
+Running the loop at the univariate variant's selection depth (`select_k = 5`,
+the only change) was the symmetric comparison the tuned table above was missing.
+
+| at α = 0.05 | agent `k=40` | agent `k=5` | `univariate` `k=5` |
+|---|---|---|---|
+| no-cause worlds kept silent | 91.6% | **91.5%** | **94.3%** |
+| suspects reported | 0.60 | 1.16 | 2.06 |
+| reports nothing (real) | 51% | 6% | 0% |
+
+**Depth does not move the loop's error control at all** (less than half a
+point), while it moved the univariate arm substantially. So the binding
+constraint is the held-out permutation-importance estimator, not the depth — a
+property of the architecture rather than a parameter. Depth still buys a usable
+report (0.60 → 1.16 suspects), it just does not close the gap. And the
+equal-effort comparison lands where the tuned one did, so that conclusion was
+not a tuning artifact.
+
+The unpredicted part, on permuted labels:
+
+| | `select_k = 40` | `select_k = 5` |
+|---|---|---|
+| noise sensors clearing the threshold **on merit** | 13.7 | **0.47** |
+| never-empty fallback fired | **0.0%** | **62.5%** |
+| replicates reporting nothing | 0.0% | 0.0% |
+
+At the pre-registered depth the threshold is too loose to filter anything and
+the fallback is never needed. At the narrow depth **the threshold works almost
+perfectly and the fallback then fires on 62.5% of null replicates and puts the
+noise straight back.** Abstention is 0% either way, by two different mechanisms.
+This contradicts result 1's diagnosis, which was measured only at `k = 40`;
+both depths are now measured and neither generalises to the other.
+
 ---
 
 ## What I tried that did not work, and what it rules out
@@ -140,6 +176,15 @@ replaces the earlier conclusion rather than quietly overwriting it.
 - **Blaming the never-empty fallback for the false discoveries.** Measured at
   0.0%. Rules out "delete four lines and it's fixed" — the threshold is the
   problem, so the fix has to be a calibrated bar.
+- **Predicting that selection depth explains the loop's weak error control.**
+  It explains the *baseline's* entirely and the loop's not at all (91.6% →
+  91.5%). Rules out tuning `select_k` as a fix, and localises the problem in the
+  permutation-importance estimator.
+- **Twice now, generalising a mechanism from one operating point.** The ranker
+  saturation held at one selection depth and vanished at another; the
+  never-empty guard was irrelevant at one depth and decisive at another. Rules
+  out single-operating-point mechanism claims on this pipeline; every such claim
+  in `RESULTS.md` now names the depth it was measured at.
 - **Describing a protocol the code did not implement.** An adversarial review
   caught `null_fdr_rankers.py`'s docstring and the generated `RESULTS.md` both
   claiming `SensorCleaner` is fitted inside each bootstrap resample. It is
@@ -251,29 +296,27 @@ is still open — it needs a call, not more measurement.
 
 | job | started | expect | check |
 |---|---|---|---|
-| `scripts/null_fdr.py --select-k 5` (H4: is depth what limits the loop's error control too?) | ~13:25 Fri | ~33 min, writes `runs/null_fdr_k5.json` | `tail -5 runs/null_fdr_k5.log` |
+| **H5** — `scripts/stability_secom.py --only agent_model --append` | ~16:55 Fri | writes a new row into `runs/secom_stability.json` | `tail -5 runs/stability_agent_model.log` |
 
-Queued behind it, in order:
+H5 re-measures the headline top-5 stability KPI with `attribution="model"`
+instead of held-out permutation importance — one config field, nothing else
+changed. Everything above now implicates that estimator: it loses to
+model-native importance at 5 of 5 depths on AUC, the permutation-based rankers
+are the least stable rows in the stability table, its bootstrap support
+separates real from permuted labels worse than any plain ranker, and depth turned
+out not to be the constraint. This is the same diagnosis tested on the KPI the
+project is actually scored against.
 
-1. **H5** — `scripts/stability_secom.py --only agent_model --append`. Re-measures
-   the headline top-5 stability KPI with `attribution="model"` instead of
-   held-out permutation importance, one config field changed. Three separate
-   measurements now implicate that statistic; this tests whether it is what
-   limits stability, or whether the sample-size wall dominates as this repo
-   currently claims. ~80 min. Hypothesis and both competing predictions are in
-   `critique_log.md` Turn 8, written before the run.
-2. **Re-run `scripts/null_fdr_rankers.py --variants`** so its JSON's own
-   `leakage_control` field carries the corrected protocol text. The numbers are
-   unaffected; `RESULTS.md` already states the corrected version from a
-   verified literal. ~32 min, cosmetic.
+Predictions were written down before the run (`critique_log.md`, Turn 8):
+stability climbs from 22.3% toward `rf_impurity`'s 36.5% if the estimator is the
+constraint, or stays near 22.3% if the sample-size wall dominates as this repo
+currently claims. **Both predictions say the 80% KPI is missed** — H5 is not an
+attempt to reach it, and an 80% result would be cause for suspicion.
 
-H4 asks *why* the loop loses, not whether — the univariate arm has already
-cleared it either way. If the loop's control climbs into the 93–94% band when
-only its selection depth changes, the finding narrows to "selection depth
-dominates ranker choice", which is more useful to a practitioner than "this
-architecture underperforms". If it does not move, its permutation-importance
-estimator is the binding constraint. Hypothesis written down before the run
-(`critique_log.md`, Turn 6).
+Also queued, cosmetic: re-run `scripts/null_fdr_rankers.py --variants` so its
+JSON's own `leakage_control` field carries the corrected protocol text. The
+numbers are unaffected and `RESULTS.md` already states the corrected version
+from a verified literal. ~32 min.
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
 (11 stages, CPU only, 16 workers). Tests: `tests/test_smoke.py` (2),
