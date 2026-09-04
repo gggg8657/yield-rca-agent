@@ -165,6 +165,12 @@ def main():
         "random_floor_raw": random_floor(p_eff, a.k),
         "random_floor_cluster": random_floor(n_clusters_eff, a.k),
         "schemes": {k: {"n_replicates": len(v)} for k, v in schemes.items()},
+        # Recorded so a claim about the loop's internals -- "it replays the
+        # ranking on n_boot resamples" -- can be sourced from the run that
+        # produced the row rather than read off the version of arms.py that
+        # happens to be checked out when the report is generated.
+        "agent_cfg": dict(AGENT_CFG),
+        "agent_base_kw": dict(AGENT_BASE_KW),
         "rankers": {k: v for k, v in prev.get("rankers", {}).items()
                     if k not in todo},
     }

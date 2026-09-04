@@ -8,3 +8,4 @@ data/
 # the dataset archive itself is not source
 secom.zip
 runs/*.log
+.heartbeat_*

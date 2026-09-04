@@ -260,6 +260,7 @@ Two perturbation schemes, and the choice matters more than any modelling decisio
 | `univariate` | per-sensor \|AUC - 0.5\| | 46.1% | 46.0% | 61.1% | 73.7% | 73.7% |
 | `logreg_coef` | \|standardised logistic coefficient\| | 42.6% | 42.6% | 55.9% | 68.8% | 68.8% |
 | `rf_impurity` | random-forest impurity importance | 36.5% | 36.6% | 49.7% | 53.0% | 53.0% |
+| `agent_model` | full loop, model-native attribution instead of permutation | 35.3% | 35.6% | 47.9% | 46.6% | 46.8% |
 | `agent` | full agent loop: attribute -> correlate -> verify -> drop | 22.3% | 22.8% | 36.0% | 37.2% | 37.3% |
 | `agent_no_corr` | attribute -> verify -> drop, correlation grouping off | 22.1% | 22.6% | 35.0% | 35.7% | 35.9% |
 | `perm_only` | SensorAgent only: screen + held-out permutation AUC drop | 20.0% | 20.6% | 32.8% | 34.1% | 34.3% |
@@ -279,6 +280,20 @@ The most stable ranker in the table is `univariate` -- the plan/verify machinery
 | `agent` | + correlation grouping | 22.3% | +0.2% |
 
 So verification is worth +2.1% of top-5 agreement and grouping +0.2%. Only one of the two steps is doing measurable work here. Note also that the raw and cluster-aware columns barely differ across the whole table, which says the top 5 mostly are *not* drawn from the near-duplicate families that motivated grouping -- the instability is between genuinely different sensors.
+
+**And which part is the statistic rather than the structure?** The ladder holds the attribution statistic fixed, so it can only price the loop's mechanisms. `agent_model` is the same loop with one field changed -- `attribution="model"` instead of held-out permutation importance -- which turns the table into a 2x2:
+
+|  | permutation attribution | model-native attribution | statistic is worth |
+|---|---|---|---|
+| **bare ranker** | `perm_only` 20.0% | `rf_impurity` 36.5% | +16.4 |
+| **full agent loop** | `agent` 22.3% | `agent_model` 35.3% | +13.0 |
+| **architecture is worth** | +2.3 | -1.1 |  |
+
+Changing the **statistic** is worth +13.0 points to the loop and makes it 2.8x faster (40.3 min to 14.6 min). Changing the **architecture** -- screen, correlation grouping, bootstrap verify, drop -- is worth +2.3 points on top of the noisy statistic and -1.1 on top of the better one. Both architecture deltas are inside one standard deviation of the replicate-to-replicate spread (15.2 points), and they point in opposite directions.
+
+So on this dataset the loop's stability is close to a function of which importance statistic it consumes, and the plan/correlate/verify machinery around that statistic is approximately a no-op in both directions. The sharpest form of it is the right-hand column: `agent_model` runs a screen, a correlation grouping, a bootstrap verification pass and a drop step over roughly what `rf_impurity` reports directly, takes 14.1x longer, and finishes 1.1 points behind it.
+
+*This was run as a pre-registered prediction rather than a sweep.* `critique_log.md` Turn 8 predicted, before the run, that the swap would land near `rf_impurity`'s 36.5% and would not reach the 80% KPI; the competing explanation on record predicted it would stay near 22.3%. Both halves of the first prediction hold, and the miss against the KPI is still 44.7 points.
 
 Two different gaps are visible here and they should not be conflated. The first is between rankers: `univariate` is +23.7% above the full loop, so *choice of ranker matters a great deal* -- held-out permutation importance, scored on an inner split holding roughly 25 positives, is simply a noisier statistic than a univariate AUC or a fitted coefficient. That is the same finding the sensitivity sweep reached from the accuracy side, and it is actionable: the loop's attribution mode is a parameter.
 
@@ -402,17 +417,28 @@ The table above tunes the baseline's selection depth and leaves the loop at its 
 
 What depth *does* buy the loop is a usable report: 1.16 suspects against 0.60, and an empty report on 6% of real replicates instead of 51%. So `select_k` is worth turning down; it just does not close the gap on error control.
 
-**And the mechanism swaps over, which is worth seeing.** The same two guards behave completely differently at the two depths:
+**The two guards do behave completely differently at the two depths**, which is worth seeing before reading too much into either:
 
 | on permuted labels | `select_k = 40` | `select_k = 5` |
 |---|---|---|
 | pure-noise sensors clearing the threshold on merit | 13.7 | 0.47 |
 | replicates where the never-empty fallback fired | 0.0% | 62.5% |
-| replicates reporting nothing at all | 0.0% | 0.0% |
+| prediction set left empty (`report_tau = None`, so this row cannot be anything else) | 0.0% | 0.0% |
 
-At the pre-registered depth the threshold is so loose that 13.7 noise sensors clear it unaided and the fallback is never needed. Narrow the depth and the threshold starts working -- only 0.47 noise sensors clear it -- but then the fallback fires on 62.5% of null replicates and puts the suspects back. **Abstention is 0% either way.** The guard is not redundant machinery that happens never to trigger; it is the thing that makes abstention impossible, and it only reveals itself once the threshold is set well enough to matter.
+At the pre-registered depth the threshold is so loose that 13.7 noise sensors clear it unaided and the fallback is never needed. Narrow the depth and the threshold starts working -- only 0.47 noise sensors clear it -- and the fallback takes over, firing on 62.5% of null replicates.
 
-This also corrects a reading recorded earlier in this repository: that the guards were *not* the mechanism behind the false-discovery rate. That was true at `select_k = 40` and false at `select_k = 5`. Both operating points are measured above, and neither generalises to the other.
+**But the fallback never reaches the report, and that is measurable rather than arguable.** Splitting the null replicates by whether it fired:
+
+| null replicates, `select_k = 5` | n | largest support reached | replicates naming a suspect over tau = 0.417 |
+|---|---|---|---|
+| fallback fired (nothing cleared pi = 0.3) | 125 | 0.250 | 0 |
+| threshold cleared on merit | 75 | 0.583 | 25 |
+
+The fallback fires exactly when no sensor clears pi = 0.3, so by construction those replicates top out below 0.3 -- and tau(0.05) = 0.417 sits *above* pi. Every one of the 125 replicates the fallback fires on is therefore silent under the calibrated rule: 0 of them name anything. The 25 null replicates that do get through are all replicates where the threshold was cleared on merit -- that is, where the attribution estimator handed a pure-noise sensor a genuinely high bootstrap support. **The residual error-control failure is the estimator's, not the guard's.**
+
+One bookkeeping note, so the counts are not read as inconsistent: the 25 above uses this run's own full-null tau, while the error-control column in the table above is the split-half held-out figure from `scripts/abstain.py`, which fits tau on one half of the null replicates and counts on the other. The two differ by the usual amount an in-sample quantile differs from a held-out one; the held-out figure is the one that carries the claim, and the cross-tab is here for the mechanism, not for the rate.
+
+*This retracts a correction made earlier in this repository.* Turn 9 of `critique_log.md` read the 62.5% fallback rate as the guard destroying an otherwise working filter, and wrote that up as overturning an earlier finding. The re-reading was wrong in the same way the thing it corrected was: it took a property of `selected_`, the prediction set, and attributed it to the report. The original reading -- that the guards are not the mechanism behind the false-discovery rate -- holds at both depths. What is true about the fallback is narrower: it makes the *uncalibrated* `stability_min` filter unable to return an empty prediction set, and the abstention row above is 0% at both depths because these runs set `report_tau = None`, which disables abstention by configuration. Neither fact bears on the tau-calibrated column.
 
 At matched depth the univariate ranker is still ahead on control, by +2.7 points (94.3% against 91.5%), and reports 2.06 suspects against 1.16. That is the equal-effort comparison, and it is the one the README's conclusion should rest on.
 <!-- END:ranker_fdr -->

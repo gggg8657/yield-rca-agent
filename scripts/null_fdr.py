@@ -131,15 +131,27 @@ def main():
                          "depth narrowed, so this asks whether depth or the "
                          "permutation-importance estimator is what limits the "
                          "loop's.")
+    ap.add_argument("--attribution", default=None,
+                    choices=["permutation", "model"],
+                    help="override the loop's attribution statistic. H6: "
+                         "H5 showed model-native attribution lifts top-5 "
+                         "stability by 13 points, and depth (H4) did not move "
+                         "error control at all, so this asks whether the "
+                         "estimator is what limits error control too.")
     ap.add_argument("--out", default="runs/null_fdr.json")
     a = ap.parse_args()
 
     X, y, names = load_secom(a.root)
-    over = {"select_k": a.select_k} if a.select_k is not None else {}
+    over = {}
+    if a.select_k is not None:
+        over["select_k"] = a.select_k
+    if a.attribution is not None:
+        over["attribution"] = a.attribution
     jobs = [(True, r) for r in range(a.null)] + [(False, r) for r in range(a.real)]
     if over:
-        print(f"[null_fdr] overriding {over} (baseline is "
-              f"select_k={AGENT_CFG['select_k']})", flush=True)
+        base_cfg = {k: AGENT_CFG[k] for k in over}
+        print(f"[null_fdr] overriding {over} (baseline is {base_cfg})",
+              flush=True)
     print(f"[null_fdr] {len(jobs)} agent-loop fits "
           f"({a.null} permuted, {a.real} real), {a.jobs} workers", flush=True)
 

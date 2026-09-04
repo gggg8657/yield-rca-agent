@@ -6,7 +6,7 @@ every number below is regenerated into [`RESULTS.md`](RESULTS.md) by
 `scripts/report.py` from a JSON in `runs/`, and `scripts/report.py --check`
 fails CI if a document and a JSON disagree.*
 
-Last updated: Friday 2026-09-04, ~17:00.
+Last updated: Friday 2026-09-04, ~21:40.
 
 ---
 
@@ -42,6 +42,7 @@ only on the synthetic generator, where its premise is true by construction.
 | **those non-invariant across production periods** | *[not measured]* | **1** — and it is the loop's top suspect | same **(new)** |
 | **error control the loop's confidence can reach** | *[not measured]* | **91.6%** (95% target) | `runs/null_fdr_rankers.json` **(new)** |
 | **the same, for a plain univariate ranker** | *[not measured]* | **94.3%**, reporting 2.06 suspects vs the loop's 0.60 | same **(new)** |
+| **top-5 stability, loop with model-native attribution** | *[not measured]* | **35.3%** — +13.0 points for one config field | `runs/secom_stability.json` **(new)** |
 
 Nothing from Friday morning was re-run or revised. The two KPI verdicts stand:
 **AUC ≥ 0.75 met by the baseline, not by the agent loop; top-5 stability ≥ 80%
@@ -49,7 +50,7 @@ not met on any protocol.**
 
 ---
 
-## The five new results
+## The six new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -135,7 +136,7 @@ no correlation grouping and no verification loop. **So the loop has no measured
 advantage on any axis here.** `RESULTS.md` carries an explicit note that this
 replaces the earlier conclusion rather than quietly overwriting it.
 
-### 5. Why it loses is now localised — and a guard that changes roles
+### 5. Why it loses is now localised: the depth is not the constraint
 
 Running the loop at the univariate variant's selection depth (`select_k = 5`,
 the only change) was the symmetric comparison the tuned table above was missing.
@@ -163,11 +164,82 @@ The unpredicted part, on permuted labels:
 | replicates reporting nothing | 0.0% | 0.0% |
 
 At the pre-registered depth the threshold is too loose to filter anything and
-the fallback is never needed. At the narrow depth **the threshold works almost
-perfectly and the fallback then fires on 62.5% of null replicates and puts the
-noise straight back.** Abstention is 0% either way, by two different mechanisms.
-This contradicts result 1's diagnosis, which was measured only at `k = 40`;
-both depths are now measured and neither generalises to the other.
+the fallback is never needed. At the narrow depth the threshold works almost
+perfectly and the fallback fires on 62.5% of null replicates.
+
+**I first wrote that up as the fallback destroying an otherwise working filter,
+and that was wrong — see result 6.** The fallback tops up `selected_`, the set
+the classifier is fitted on, which cannot be empty; the error-control column is
+computed from the *pre-drop* supports and never reads it. The last row above is
+0% at both depths because these runs set `report_tau = None`, i.e. abstention is
+switched off by configuration — that row cannot be anything else, and I should
+not have read it as a finding.
+
+### 6. The one config field that is worth 13 points — and the architecture that is worth about one
+
+The estimator diagnosis in result 5 was reached by elimination, so I tested it
+on the KPI the project is scored against. `attribution="model"` instead of
+held-out permutation importance, one field, same 200 bootstrap replicates.
+
+| ranker | top-5 stability | wall |
+|---|---|---|
+| `univariate` — rank each sensor on its own | 46.1% | 0.2 min |
+| `rf_impurity` — the forest's own importance | 36.5% | 1.0 min |
+| **`agent_model` — full loop, model-native attribution** | **35.3%** | 14.6 min |
+| `agent` — full loop, held-out permutation (pre-registered) | 22.3% | 40.3 min |
+| `perm_only` — the loop's attribution step alone | 20.0% | 7.9 min |
+
+Read as a 2x2 rather than a ladder, this decomposes the loop:
+
+- Changing the **attribution statistic** is worth **+13.0** points, and makes
+  the loop **2.8x faster**.
+- Changing the **architecture** — screen, correlation grouping, bootstrap
+  verify, drop — is worth **+2.3** points on top of the noisy statistic
+  (`perm_only` → `agent`) and **−1.1** on top of the good one
+  (`rf_impurity` → `agent_model`). Both are inside one standard deviation of
+  the replicate-to-replicate spread.
+
+So the plan/correlate/verify machinery is close to a no-op in *both*
+directions, and the loop's stability is essentially a function of which
+importance statistic it consumes. `agent_model` runs a screen, a correlation
+grouping, 12 bootstrap replays and a drop step over roughly what `rf_impurity`
+reports directly, takes 14.1x longer, and finishes 1.1 points behind it.
+
+The prediction was written down before the run (`critique_log.md`, Turn 8):
+"materially above 22.3%, landing near `rf_impurity`'s 36.5%, and will not reach
+80%." Measured 35.3%. **The KPI is still missed by 44.7 points**, and this was
+never an attempt to reach it — it was an attempt to attribute the miss to a
+component, which now succeeds.
+
+One caveat on the target itself, which I should have said earlier: this repo has
+no published SECOM figure for top-5 selection stability to compare against.
+SECOM papers report classification AUC. The 80% is a project target from the
+brief with no external provenance, so the only honest comparisons are the
+internal ones in the table.
+
+### 6b. And a retraction: the guard was never the problem
+
+Checking result 5's write-up against the code it describes rather than
+re-running anything, the fallback claim does not survive. Split the 200 null
+replicates at `select_k = 5` by whether the guard fired:
+
+| null replicates, `select_k = 5` | n | largest support reached | naming a suspect over τ = 0.417 |
+|---|---|---|---|
+| fallback fired (nothing cleared π = 0.3) | 125 | 0.250 | **0** |
+| threshold cleared on merit | 75 | 0.583 | 25 |
+
+The guard fires exactly when every support is below π = 0.3, and τ(0.05) = 0.417
+sits *above* π — so **every replicate it fires on is already silent under the
+calibrated rule.** Zero of the 125 name anything. The null worlds that get
+through are entirely ones where the attribution estimator handed a pure-noise
+sensor a genuinely high support.
+
+Which means the guards are not the mechanism behind the false-discovery rate at
+*either* depth — the original result-1 diagnosis was right and my correction to
+it was wrong — and the residual error-control failure is now attributed to the
+estimator by measurement rather than by elimination. Fixed in the generator,
+pinned by two new tests, and the full reasoning is in `critique_log.md` Turn 10.
+No headline number changes.
 
 ---
 
@@ -296,22 +368,26 @@ is still open — it needs a call, not more measurement.
 
 | job | started | expect | check |
 |---|---|---|---|
-| **H5** — `scripts/stability_secom.py --only agent_model --append` | ~16:55 Fri | writes a new row into `runs/secom_stability.json` | `tail -5 runs/stability_agent_model.log` |
+| **H6** — `null_fdr.py --attribution model` at `--select-k 5`, then at the pre-registered depth | ~21:25 Fri | `runs/null_fdr_k5_model.json`, `runs/null_fdr_model.json`, each priced into `runs/abstain_*_model.json` | `tail -5 runs/null_fdr_k5_model.log`; done when `runs/null_fdr_model.log` ends with `H6 DONE` |
 
-H5 re-measures the headline top-5 stability KPI with `attribution="model"`
-instead of held-out permutation importance — one config field, nothing else
-changed. Everything above now implicates that estimator: it loses to
-model-native importance at 5 of 5 depths on AUC, the permutation-based rankers
-are the least stable rows in the stability table, its bootstrap support
-separates real from permuted labels worse than any plain ranker, and depth turned
-out not to be the constraint. This is the same diagnosis tested on the KPI the
-project is actually scored against.
+H6 is the same one-field change as result 6, on the error-control axis instead
+of the stability axis. Result 5 pinned the loop's binding constraint on that
+axis to its attribution estimator **by elimination** — depth was ruled out, then
+the guard was ruled out (6b), so the estimator is what remains. This repo has
+twice this weekend had an elimination argument fail when tested directly, so it
+gets tested directly.
 
-Predictions were written down before the run (`critique_log.md`, Turn 8):
-stability climbs from 22.3% toward `rf_impurity`'s 36.5% if the estimator is the
-constraint, or stays near 22.3% if the sample-size wall dominates as this repo
-currently claims. **Both predictions say the 80% KPI is missed** — H5 is not an
-attempt to reach it, and an 80% result would be cause for suspicion.
+Prediction written down before the run (`critique_log.md`, Turn 10):
+**above 93.0% of no-cause worlds kept silent at `select_k = 5`**, up from the
+permutation arm's 91.5% and most of the way to the univariate arm's 94.3%. The
+competing explanation — that error control is capped by the bootstrap's own
+variance over ~65 failed wafers regardless of what is being replayed — predicts
+it lands within noise of 91.5%. Also written down in advance: if it clears 94.3%
+*and* its suspect count collapses under ~1.0, it bought silence rather than
+accuracy and the two columns must be read together.
+
+Both depths are being run, because the one lesson from Turn 9 that survived is
+that a single operating point is never enough.
 
 Also queued, cosmetic: re-run `scripts/null_fdr_rankers.py --variants` so its
 JSON's own `leakage_control` field carries the corrected protocol text. The
@@ -319,6 +395,7 @@ numbers are unaffected and `RESULTS.md` already states the corrected version
 from a verified literal. ~32 min.
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
-(11 stages, CPU only, 16 workers). Tests: `tests/test_smoke.py` (2),
-`tests/test_real.py` (19), `tests/test_null.py` (11) — all green as of the last
-commit, which is pushed.
+(11 stages, CPU only, 16 workers). Tests: **41 collected, all green** as of the
+last commit (`tests/test_smoke.py` 6, `tests/test_real.py` 19,
+`tests/test_null.py` 16). The per-file counts had drifted, which is why
+`scripts/audit_weekend.py` now checks them too.

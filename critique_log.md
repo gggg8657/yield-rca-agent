@@ -825,3 +825,182 @@ Which is exactly what **H5** tests on the headline KPI, launched now that the
 worker lease is free: `scripts/stability_secom.py --only agent_model --append`.
 Prediction written down in Turn 8 before either run: top-5 bootstrap stability
 climbs from 22.3% toward `rf_impurity`'s 36.5%, and does not reach 80%.
+
+---
+
+## Turn 10 (2026-09-04) — H5 confirmed, and a correction I made last turn was itself wrong
+
+### H5 verdict: confirmed, including the quantity
+
+`scripts/stability_secom.py --only agent_model --append`, 200 bootstrap
+replicates and 25 CV-training folds, identical to every other row in the table
+→ `runs/secom_stability.json`. One config field changed: `attribution="model"`
+instead of `"permutation"`.
+
+| ranker | top-5 bootstrap stability | sd | consensus | distinct sensors ever named | wall |
+|---|---|---|---|---|---|
+| `univariate` | 46.1% | 20.2 | 0.611 | 73 | 0.2 min |
+| `logreg_coef` | 42.6% | 15.8 | 0.559 | 89 | 0.0 min |
+| `rf_impurity` | 36.5% | 17.2 | 0.497 | 95 | 1.0 min |
+| **`agent_model`** | **35.3%** | 15.3 | 0.479 | 107 | 14.6 min |
+| `agent` | 22.3% | 15.2 | 0.360 | 151 | 40.3 min |
+| `agent_no_corr` | 22.1% | 15.4 | 0.350 | 148 | 32.6 min |
+| `perm_only` | 20.0% | 14.8 | 0.328 | 173 | 7.9 min |
+
+Turn 8 predicted, in writing and before the run, that the swap would "raise
+top-5 bootstrap stability materially above the loop's 22.3%, landing near
+`rf_impurity`'s 36.5%, and will not reach the 80% KPI". Measured: **35.3%**,
+1.1 points from the named landmark, and the KPI is still missed by 44.7 points.
+The competing explanation on the record — that the sample-size wall dominates
+and ranker choice is second-order, which predicted `agent_model` stays near
+22.3% — is refuted by 13.0 points.
+
+I want to be careful about what this does and does not license. It is a
+confirmed prediction, which is rarer here than it should be, but it confirms a
+*diagnosis*, not a capability: the loop is still 10.7 points below the simplest
+ranker in the table and 44.7 below target. **On the published-baseline question,
+this metric has no published baseline I can cite.** SECOM papers report
+classification AUC, and this repo has no source in hand reporting top-5
+root-cause selection stability on SECOM, so the 80% figure is a project target
+from the brief with no external provenance, and the only honest comparisons are
+the internal ones above. That is worth saying rather than dressing the target up
+as a literature number.
+
+### What the table now decomposes, which is the actually useful part
+
+Reading the ladder as a 2x2 rather than a list:
+
+|  | permutation attribution | model attribution | machinery delta |
+|---|---|---|---|
+| bare ranker | `perm_only` 20.0% | `rf_impurity` 36.5% | — |
+| full loop | `agent` 22.3% | `agent_model` 35.3% | — |
+| attribution delta | +2.3 | **-1.1** | |
+
+- Changing the **attribution statistic** is worth **+13.0** points (`agent` →
+  `agent_model`) and makes the loop 2.8x cheaper (40.3 → 14.6 min).
+- Changing the **architecture** — screen, correlation grouping, bootstrap
+  verification, drop — is worth **+2.3** points on top of the noisy statistic
+  and **-1.1** on top of the good one. Both are inside one sd of the pairwise
+  overlap distribution.
+
+So the plan/correlate/verify apparatus is not merely unhelpful, it is
+*approximately a no-op in both directions*: the loop's stability is essentially
+a function of which importance statistic it consumes. That is a sharper
+statement than "the loop loses", and it is the one a practitioner can act on:
+the component worth changing is one line, and the component the repo is named
+after is worth about a point either way.
+
+`rf_impurity` at 36.5% versus `agent_model` at 35.3% is the cleanest form of it.
+`agent_model` runs a screen, a correlation grouping, 12 bootstrap replays and a
+drop step over what is essentially the same statistic `rf_impurity` reports
+directly, takes 14.1x longer, and ends up 1.1 points behind it.
+
+### The self-audit that mattered more than the run
+
+Reading `RESULTS.md` back before regenerating it, the paragraph I wrote last
+turn does not survive checking against the code it describes. Turn 9 concluded:
+
+> Narrow the depth and **the threshold starts working almost perfectly** ...
+> **and the fallback fires on 62.5% of null replicates and puts them straight
+> back.** ... the guard is precisely what destroys an otherwise working filter.
+
+That conflates two sets `AgentRCA.fit` deliberately keeps apart.
+`selected_` is what the final classifier is fitted on; it cannot be empty,
+because a classifier needs at least one column, and the `if not surv` guard is
+what guarantees that. `reported_` is what an engineer is handed, it is
+thresholded at `report_tau`, and it *is* allowed to be empty. The guard touches
+only the first. `scripts/abstain.py` reads `stability_values` — the pre-drop
+supports — and never looks at `selected_` at all, so the error-control column
+is a function of the second set only.
+
+Checked on the recorded replicates in `runs/null_fdr_k5.json` rather than argued:
+
+| null replicates, `select_k = 5` | n | largest support reached | naming a suspect over tau = 0.417 |
+|---|---|---|---|
+| fallback fired (nothing cleared pi = 0.3) | 125 | 0.250 | **0** |
+| threshold cleared on merit | 75 | 0.583 | 25 |
+
+The fallback fires exactly when every support is below pi = 0.3, and
+tau(0.05) = 0.417 sits *above* pi, so all 125 replicates it fires on are silent
+under the calibrated rule. Not "mostly" — zero of them name anything. The null
+worlds that do get through are entirely ones where the attribution estimator
+handed a pure-noise sensor a genuinely high bootstrap support.
+
+**So Turn 9's correction was wrong, and the reading it corrected was right.**
+The guards are not the mechanism behind the false-discovery rate, at either
+depth. What is true is much narrower: the fallback prevents the *uncalibrated*
+`stability_min` filter from returning an empty prediction set, and the
+"replicates reporting nothing at all: 0.0%" row is 0% at both depths because
+these runs set `report_tau = None`, which disables abstention *by
+configuration*. I had presented a structural property of a code path with
+abstention switched off as a discovered limitation of the pipeline. That is
+exactly the class of error the weekend rules exist to prevent, and it was mine,
+not a critic's.
+
+Fixed by generating the paragraph from the records
+(`report.fallback_reach`), and pinned by two tests in `tests/test_null.py`: one
+builds a case where the guard must fire and asserts `reported_` still comes back
+empty while `predict_proba` still works, the other asserts the
+tau >= `stability_min` ordering the cross-tab depends on, so a future run that
+inverts it fails loudly instead of quietly invalidating the prose.
+
+The uncomfortable meta-observation: Turn 9 congratulated itself for learning
+that "a claim about a mechanism is only as general as the operating points it
+was measured at", and in the same entry made a different error of the same
+family — generalising from one *code path* instead of one operating point. The
+lesson that actually generalises is duller: **read the implementation before
+attributing a number to a mechanism.** Both of my last two mechanism claims were
+wrong on first writing, and both were caught by reading code rather than by
+running anything.
+
+Net effect on the headline: none. The direction of every result is unchanged and
+the diagnosis is now better supported, since the residual error-control failure
+is attributed to the estimator by measurement instead of by elimination.
+
+---
+
+## Turn 10, second half — H6, written before the run
+
+Two independent axes now point at the attribution estimator:
+
+1. **Stability** (H5, above): swapping it is worth +13.0 points; the
+   architecture around it is worth about -1.1 to +2.3.
+2. **Error control** (H4, Turn 9): depth is worth -0.1 points to the loop
+   (91.6% → 91.5%) while it was worth several to the univariate arm, and the
+   cross-tab above localises the residual failure to noise sensors that clear
+   pi *on merit* — i.e. to the estimator.
+
+But axis 2's attribution to the estimator is still **by elimination**. Depth was
+ruled out and the guard has now been ruled out, so the estimator is what is
+left. That is an inference, not a measurement, and this repo has twice this
+weekend had an inference-by-elimination fail when tested directly. The direct
+test is one field.
+
+> **H6.** The loop's null error control is limited by its attribution
+> statistic. Re-running `scripts/null_fdr.py` with `attribution="model"` and
+> nothing else changed will raise the fraction of no-cause worlds kept silent
+> at alpha = 0.05 above the permutation arm's 91.5% (`select_k = 5`) and 91.6%
+> (`select_k = 40`), moving it most of the way to the univariate arm's 94.3%.
+> Concretely: **above 93.0% at `select_k = 5`.**
+
+**What distinguishes H6 from the obvious alternative.** The alternative is that
+error control at this class balance is capped by the bootstrap's own variance —
+12 replays over ~65 fails — regardless of which statistic is being replayed. It
+predicts `agent_model` lands within noise of 91.5%, and that the univariate
+arm's 94.3% comes from something else entirely (its 40 bootstraps rather than
+12, say). The two predictions are ~2 points apart, which is larger than the
+0.1-point spread depth produced, so the protocol can resolve it.
+
+I am also writing down what would make me distrust a confirmation: if
+`agent_model` clears 94.3% *and* its suspect count collapses toward zero, then
+it has bought control by reporting less rather than by ranking better, and the
+suspects-reported column has to be read alongside the control column. The
+univariate arm reports 2.06 suspects at 94.3% control; anything under ~1.0 is
+buying silence, not accuracy.
+
+**Run, launched before writing this up:** `scripts/null_fdr.py --null 200
+--real 40 --jobs 16 --base rf --attribution model` at `--select-k 5` and then at
+the pre-registered depth, each priced by `scripts/abstain.py` on the same
+split-half calibration → `runs/null_fdr_k5_model.json`,
+`runs/null_fdr_model.json`. Both depths deliberately, because the one lesson
+from Turn 9 that did survive is that one operating point is never enough.

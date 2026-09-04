@@ -59,8 +59,42 @@ def claims(d):
              f"{p['mean']:+.3f} [{p['ci_lo']:+.3f}, {p['ci_hi']:+.3f}]"),
         ]
     if st:
-        r = st["rankers"]["agent"]["bootstrap"]["raw"]["pairwise_overlap"]
-        out.append(("agent top-5 stability", "secom_stability", f"{100*r:.1f}%"))
+        rk_ = st["rankers"]
+        def _stab(name):
+            return 100 * rk_[name]["bootstrap"]["raw"]["pairwise_overlap"]
+        def _wall(name):
+            return rk_[name]["bootstrap"]["wall_min"]
+        out.append(("agent top-5 stability", "secom_stability",
+                    f"{_stab('agent'):.1f}%"))
+        # The result-6 decomposition: every cell of the 2x2 and both deltas,
+        # so the "+13.0 points for one field, about a point for the
+        # architecture" claim cannot drift away from the run behind it.
+        for name in ("univariate", "rf_impurity", "agent_model", "perm_only"):
+            if name in rk_:
+                out.append((f"{name} top-5 stability", "secom_stability",
+                            f"{_stab(name):.1f}%"))
+        if "agent_model" in rk_:
+            out += [
+                ("attribution delta (agent -> agent_model)", "secom_stability",
+                 f"+{_stab('agent_model') - _stab('agent'):.1f}"),
+                ("machinery delta on model attribution", "secom_stability",
+                 f"-{_stab('rf_impurity') - _stab('agent_model'):.1f}"),
+                ("machinery delta on permutation attribution",
+                 "secom_stability",
+                 f"+{_stab('agent') - _stab('perm_only'):.1f}"),
+                ("agent_model speedup", "secom_stability",
+                 f"{_wall('agent') / _wall('agent_model'):.1f}x"),
+                ("agent_model wall", "secom_stability",
+                 f"{_wall('agent_model'):.1f} min"),
+                # The claim is a *ratio* of walls, and writing it from the
+                # rounded minutes is how "14.6x" got into this document once.
+                ("agent_model vs rf_impurity wall ratio", "secom_stability",
+                 f"{_wall('agent_model') / _wall('rf_impurity'):.1f}x"),
+                ("agent_model shortfall against rf_impurity",
+                 "secom_stability",
+                 f"{_stab('rf_impurity') - _stab('agent_model'):.1f} points"),
+                ("agent wall", "secom_stability", f"{_wall('agent'):.1f} min"),
+            ]
     if nf:
         out += [
             ("false discoveries on the null", "null_fdr",
@@ -75,6 +109,30 @@ def claims(d):
             ("fallback fired, k=5", "null_fdr_k5",
              f"{100*nf5['null']['fallback_rate']:.1f}%"),
         ]
+    if nf5:
+        # The 6b retraction rests on a cross-tab, not on a summary field, so
+        # it is recomputed from the per-replicate records here exactly as
+        # `report.fallback_reach` does it.
+        null5 = [r for r in nf5["records"] if r["permuted"]]
+        tau5 = nf5["thresholds"]["alpha_0.05"]
+        fired = [r for r in null5 if r["fallback_fired"]]
+        unaided = [r for r in null5 if not r["fallback_fired"]]
+        if fired and unaided:
+            over = lambda g: sum(
+                any(v >= tau5 for v in r["stability_values"]) for r in g)
+            out += [
+                ("guard cross-tab: replicates it fired on", "null_fdr_k5",
+                 f"| {len(fired)} | "
+                 f"{max(r['max_stability'] for r in fired):.3f} |"),
+                ("guard cross-tab: those naming a suspect over tau",
+                 "null_fdr_k5", f"Zero of the {len(fired)} name anything"),
+                ("guard cross-tab: replicates clearing pi on merit",
+                 "null_fdr_k5",
+                 f"| {len(unaided)} | "
+                 f"{max(r['max_stability'] for r in unaided):.3f} | "
+                 f"{over(unaided)} |"),
+                ("tau(0.05) at k=5", "null_fdr_k5", f"{tau5:.3f}"),
+            ]
     if ab:
         m = ab["levels"]["alpha_0.05"]
         out += [

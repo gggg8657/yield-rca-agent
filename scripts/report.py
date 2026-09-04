@@ -699,6 +699,73 @@ def sec_sweep(sw):
     return body
 
 
+def attribution_2x2(st):
+    """Separate the attribution statistic from the architecture around it.
+
+    The ladder above adds the loop's mechanisms one at a time on top of a fixed
+    attribution statistic, so it can only ever price the mechanisms. Reading the
+    same table as a 2x2 -- {bare ranker, full loop} x {permutation, model-native
+    attribution} -- prices the statistic too, and the two are not the same size.
+
+    ``rf_impurity`` is the bare-ranker cell for model-native attribution because
+    it ranks by essentially the statistic ``attribution="model"`` averages, and
+    ``perm_only`` is the bare-ranker cell for permutation because it *is* the
+    loop's attribution step with nothing after it.
+    """
+    r = st.get("rankers") or {}
+    need = ("perm_only", "agent", "rf_impurity", "agent_model")
+    if not all(k in r for k in need):
+        return []
+    v = {k: 100 * r[k]["bootstrap"]["raw"]["pairwise_overlap"] for k in need}
+    w = {k: r[k]["bootstrap"]["wall_min"] for k in need}
+    d_attr = v["agent_model"] - v["agent"]
+    d_arch_perm = v["agent"] - v["perm_only"]
+    d_arch_model = v["agent_model"] - v["rf_impurity"]
+    sd = 100 * r["agent"]["bootstrap"]["raw"]["pairwise_overlap_sd"]
+    return [
+        "**And which part is the statistic rather than the structure?** The "
+        "ladder holds the attribution statistic fixed, so it can only price "
+        "the loop's mechanisms. `agent_model` is the same loop with one field "
+        "changed -- `attribution=\"model\"` instead of held-out permutation "
+        "importance -- which turns the table into a 2x2:", "",
+        table([
+            ["**bare ranker**", f"`perm_only` {v['perm_only']:.1f}%",
+             f"`rf_impurity` {v['rf_impurity']:.1f}%",
+             f"{v['rf_impurity'] - v['perm_only']:+.1f}"],
+            ["**full agent loop**", f"`agent` {v['agent']:.1f}%",
+             f"`agent_model` {v['agent_model']:.1f}%", f"{d_attr:+.1f}"],
+            ["**architecture is worth**", f"{d_arch_perm:+.1f}",
+             f"{d_arch_model:+.1f}", ""],
+        ], ["", "permutation attribution", "model-native attribution",
+            "statistic is worth"]), "",
+        f"Changing the **statistic** is worth {d_attr:+.1f} points to the loop "
+        f"and makes it "
+        f"{w['agent'] / w['agent_model']:.1f}x faster "
+        f"({w['agent']:.1f} min to {w['agent_model']:.1f} min). Changing the "
+        f"**architecture** -- screen, correlation grouping, bootstrap verify, "
+        f"drop -- is worth {d_arch_perm:+.1f} points on top of the noisy "
+        f"statistic and {d_arch_model:+.1f} on top of the better one. Both "
+        f"architecture deltas are inside one standard deviation of the "
+        f"replicate-to-replicate spread ({sd:.1f} points), and they point in "
+        f"opposite directions.", "",
+        f"So on this dataset the loop's stability is close to a function of "
+        f"which importance statistic it consumes, and the plan/correlate/"
+        f"verify machinery around that statistic is approximately a no-op in "
+        f"both directions. The sharpest form of it is the right-hand column: "
+        f"`agent_model` runs a screen, a correlation grouping, a bootstrap "
+        f"verification pass and a drop step over roughly what `rf_impurity` "
+        f"reports directly, takes {w['agent_model'] / w['rf_impurity']:.1f}x "
+        f"longer, and finishes {-d_arch_model:.1f} points behind it.", "",
+        "*This was run as a pre-registered prediction rather than a sweep.* "
+        "`critique_log.md` Turn 8 predicted, before the run, that the swap "
+        f"would land near `rf_impurity`'s {v['rf_impurity']:.1f}% and would "
+        f"not reach the {KPI_STABILITY:.0%} KPI; the competing explanation on "
+        f"record predicted it would stay near {v['agent']:.1f}%. Both halves "
+        f"of the first prediction hold, and the miss against the KPI is still "
+        f"{KPI_STABILITY * 100 - v['agent_model']:.1f} points.", "",
+    ]
+
+
 def sec_stability(st, prof=None):
     if not st:
         return []
@@ -827,6 +894,7 @@ def sec_stability(st, prof=None):
                   f"motivated grouping -- the instability is between genuinely "
                   f"different sensors.", "",
             ]
+        body += attribution_2x2(st)
     if not boot_ok:
         top_v = ranked[best_raw]["bootstrap"]["raw"]["pairwise_overlap"]
         gap_ranker = top_v - b["raw"]["pairwise_overlap"]
@@ -1604,6 +1672,79 @@ def sec_ranker_fdr(rk):
     return body
 
 
+def fallback_reach(nf5, alpha="alpha_0.05"):
+    """Does the never-empty fallback actually reach the calibrated report?
+
+    Written because this repository asserted for one turn that it does -- that
+    the guard "is the thing that makes abstention impossible". That reading
+    conflated two sets the loop keeps separate. ``selected_`` is what the final
+    classifier is fitted on and cannot be empty, because a classifier needs at
+    least one column; ``reported_`` is what an engineer is handed, and under the
+    tau rule it is allowed to be empty. The fallback tops up the first. The
+    error-control column is a function of the second.
+
+    Everything below is recomputed from the per-replicate supports in
+    ``runs/null_fdr_k5.json``, so it is a measurement of that run and not an
+    argument about it.
+    """
+    recs = (nf5 or {}).get("records") or []
+    null = [r for r in recs if r["permuted"]]
+    tau = ((nf5 or {}).get("thresholds") or {}).get(alpha)
+    if not null or tau is None:
+        return []
+    pi = float(null[0]["stability_min"])
+    fired = [r for r in null if r["fallback_fired"]]
+    unaided = [r for r in null if not r["fallback_fired"]]
+    over = lambda g: sum(any(v >= tau for v in r["stability_values"]) for r in g)
+    if not fired or not unaided:
+        return []
+    rows = [
+        [f"fallback fired (nothing cleared pi = {pi:g})", str(len(fired)),
+         f"{max(r['max_stability'] for r in fired):.3f}", str(over(fired))],
+        ["threshold cleared on merit", str(len(unaided)),
+         f"{max(r['max_stability'] for r in unaided):.3f}", str(over(unaided))],
+    ]
+    return [
+        "**But the fallback never reaches the report, and that is measurable "
+        "rather than arguable.** Splitting the null replicates by whether it "
+        "fired:", "",
+        table(rows, [f"null replicates, `select_k = 5`", "n",
+                     "largest support reached",
+                     f"replicates naming a suspect over tau = {tau:.3f}"]), "",
+        f"The fallback fires exactly when no sensor clears pi = {pi:g}, so by "
+        f"construction those replicates top out below {pi:g} -- and tau({alpha.split('_')[1]}) "
+        f"= {tau:.3f} sits *above* pi. Every one of the {len(fired)} replicates "
+        f"the fallback fires on is therefore silent under the calibrated rule: "
+        f"{over(fired)} of them name anything. The "
+        f"{over(unaided)} null replicates that do get through are all "
+        f"replicates where the threshold was cleared on merit -- that is, "
+        f"where the attribution estimator handed a pure-noise sensor a "
+        f"genuinely high bootstrap support. **The residual error-control "
+        f"failure is the estimator's, not the guard's.**", "",
+        f"One bookkeeping note, so the counts are not read as inconsistent: "
+        f"the {over(unaided)} above uses this run's own full-null tau, while "
+        f"the error-control column in the table above is the split-half "
+        f"held-out figure from `scripts/abstain.py`, which fits tau on one "
+        f"half of the null replicates and counts on the other. The two differ "
+        f"by the usual amount an in-sample quantile differs from a held-out "
+        f"one; the held-out figure is the one that carries the claim, and the "
+        f"cross-tab is here for the mechanism, not for the rate.", "",
+        "*This retracts a correction made earlier in this repository.* Turn 9 "
+        "of `critique_log.md` read the 62.5% fallback rate as the guard "
+        "destroying an otherwise working filter, and wrote that up as "
+        "overturning an earlier finding. The re-reading was wrong in the same "
+        "way the thing it corrected was: it took a property of `selected_`, "
+        "the prediction set, and attributed it to the report. The original "
+        "reading -- that the guards are not the mechanism behind the "
+        "false-discovery rate -- holds at both depths. What is true about the "
+        "fallback is narrower: it makes the *uncalibrated* "
+        "`stability_min` filter unable to return an empty prediction set, and "
+        "the abstention row above is 0% at both depths because these runs set "
+        "`report_tau = None`, which disables abstention by configuration. "
+        "Neither fact bears on the tau-calibrated column.", "",
+    ]
+
+
 def sec_depth(ab, ab_k5, rk, nf=None, nf5=None):
     """Is it the ranker or the selection depth that limits error control?
 
@@ -1699,33 +1840,27 @@ def sec_depth(ab, ab_k5, rk, nf=None, nf5=None):
     if nf and nf5:
         n40, n5 = nf["null"], nf5["null"]
         body += [
-            "**And the mechanism swaps over, which is worth seeing.** The "
-            "same two guards behave completely differently at the two depths:",
+            "**The two guards do behave completely differently at the two "
+            "depths**, which is worth seeing before reading too much into "
+            "either:",
             "",
             table([
                 ["pure-noise sensors clearing the threshold on merit",
                  f"{n40['n_merit_mean']:.1f}", f"{n5['n_merit_mean']:.2f}"],
                 ["replicates where the never-empty fallback fired",
                  pct(n40["fallback_rate"]), pct(n5["fallback_rate"])],
-                ["replicates reporting nothing at all",
+                ["prediction set left empty (`report_tau = None`, so this "
+                 "row cannot be anything else)",
                  pct(n40["abstention_rate"]), pct(n5["abstention_rate"])],
             ], ["on permuted labels", "`select_k = 40`", "`select_k = 5`"]), "",
             f"At the pre-registered depth the threshold is so loose that "
             f"{n40['n_merit_mean']:.1f} noise sensors clear it unaided and the "
             f"fallback is never needed. Narrow the depth and the threshold "
             f"starts working -- only {n5['n_merit_mean']:.2f} noise sensors "
-            f"clear it -- but then the fallback fires on "
-            f"{pct(n5['fallback_rate'])} of null replicates and puts the "
-            f"suspects back. **Abstention is 0% either way.** The guard is not "
-            f"redundant machinery that happens never to trigger; it is the "
-            f"thing that makes abstention impossible, and it only reveals "
-            f"itself once the threshold is set well enough to matter.", "",
-            "This also corrects a reading recorded earlier in this "
-            "repository: that the guards were *not* the mechanism behind the "
-            "false-discovery rate. That was true at `select_k = 40` and false "
-            "at `select_k = 5`. Both operating points are measured above, and "
-            "neither generalises to the other.", "",
+            f"clear it -- and the fallback takes over, firing on "
+            f"{pct(n5['fallback_rate'])} of null replicates.", "",
         ]
+        body += fallback_reach(nf5)
 
     if uni:
         gap5 = uni["null_abstention_heldout"] - a5["null_abstention_heldout"]

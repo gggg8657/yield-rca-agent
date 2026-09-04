@@ -255,3 +255,62 @@ if __name__ == "__main__":
         f()
         print(f"ok {n}")
     print(f"ok  ({len(fns)} tests)")
+
+
+# ------------------------------------- the fallback cannot reach the report
+def test_fallback_tops_up_prediction_set_not_the_report():
+    """`AgentRCA`'s never-empty guard fills `selected_`, never `reported_`.
+
+    This repo spent a turn claiming the opposite -- that the guard "is the
+    thing that makes abstention impossible" -- which conflated the set the
+    final classifier is fitted on with the set an engineer is handed. Pin the
+    distinction in code so the claim cannot come back: build a case where the
+    guard must fire (`stability_min` above 1.0 is unreachable, so nothing can
+    survive the drop step) with a `report_tau` above it, and check that
+    prediction still works while the report comes back empty.
+    """
+    X, y, _, _ = make_synthetic(n=220, p=24, n_causal=3, seed=1)
+    est = AgentRCA(base="logreg", screen="univariate", attribution="model",
+                   n_screen=12, n_screen_boot=12, select_k=3, top_k=3,
+                   stability_min=1.01, report_tau=1.01, n_boot=4, n_inner=2,
+                   max_select=5, random_state=0).fit(X, y)
+
+    # The guard fired: nothing could clear an unreachable stability_min, yet
+    # the classifier still has columns to predict from.
+    assert all(v < est.stability_min for v in est.stability_.values())
+    assert len(est.selected_) > 0
+    assert est.predict_proba(X).shape == (len(y), 2)
+
+    # And none of that reached the report, which is what the null-FDR
+    # measurement thresholds.
+    assert len(est.reported_) == 0
+    assert est.abstained_ is True
+    assert "do not identify a root cause" in est.report()
+
+
+def test_calibrated_error_control_ignores_the_fallback():
+    """tau above `stability_min` makes the guard unreachable by construction.
+
+    The measured cross-tab in `RESULTS.md` rests on an ordering, not a
+    coincidence: the fallback fires only when every support is below
+    `stability_min`, so whenever tau >= `stability_min` a fired replicate
+    cannot name anything. Checked here on the recorded null replicates so a
+    future run that inverts the ordering fails loudly instead of silently
+    invalidating the paragraph.
+    """
+    import json
+
+    src = ROOT / "runs" / "null_fdr_k5.json"
+    if not src.exists():                                    # pragma: no cover
+        return
+    d = json.loads(src.read_text())
+    tau = d["thresholds"]["alpha_0.05"]
+    null = [r for r in d["records"] if r["permuted"]]
+    fired = [r for r in null if r["fallback_fired"]]
+    assert fired, "expected the guard to fire somewhere on this null"
+    assert tau >= fired[0]["stability_min"], (
+        "tau fell below stability_min, so the RESULTS.md cross-tab no longer "
+        "follows from the ordering and its paragraph must be re-derived")
+    for r in fired:
+        assert r["max_stability"] < r["stability_min"]
+        assert not any(v >= tau for v in r["stability_values"])

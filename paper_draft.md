@@ -316,28 +316,57 @@ tunable parameter. At matched depth the univariate ranker still leads control by
 2.8 points and reports 2.06 suspects against 1.16, so the equal-effort
 comparison reaches the same conclusion as the tuned one.
 
-The unanticipated finding is more interesting than the predicted one. On
-permuted labels the two guards inside `fit` behave oppositely at the two depths:
+The unanticipated finding concerns the two guards inside `fit`, which behave
+oppositely at the two depths on permuted labels:
 
 | on permuted labels | `select_k = 40` | `select_k = 5` |
 |---|---|---|
 | noise sensors clearing the threshold on merit | 13.7 | 0.47 |
 | never-empty fallback fired | 0.0% | 62.5% |
-| replicates reporting nothing | 0.0% | 0.0% |
+| prediction set left empty | 0.0% | 0.0% |
 
 At the loose depth the stability threshold filters nothing and the fallback is
-never invoked. At the tight depth **the threshold works almost perfectly and the
-fallback then reinstates the sensors it removed**, on nearly two thirds of null
-replicates. The false-discovery rate is 1.0 at both depths, by two mechanisms
-that share nothing.
+never invoked; at the tight depth the threshold works almost perfectly and the
+fallback fires on nearly two thirds of null replicates. The false-discovery rate
+of the *uncalibrated* pipeline is 1.0 at both depths.
 
-This is worth stating as a general caution about ablating agent pipelines. A
-component that appears inert at one operating point — the fallback fired on 0%
-of replicates and looked like dead code — can be the decisive one at another. We
-drew the inert reading first, wrote it up, and had to retract it when the second
-depth was measured. Ablations of such systems should report the operating point
-they were run at, and a component should not be called redundant on the strength
-of a single one.
+We initially read the second column as the fallback reinstating the sensors the
+threshold had removed, and therefore as the mechanism behind the
+false-discovery rate. That reading was wrong, and the way it was wrong is worth
+reporting because it is a mistake the architecture invites. `fit` maintains two
+distinct sets: the sensors the final classifier is fitted on, which cannot be
+empty because a classifier requires at least one column and which the fallback
+exists to guarantee, and the sensors that are *reported*, which are thresholded
+at tau and may legitimately be empty. The error-control column of Table 5.2 is
+computed from the pre-drop bootstrap supports and never reads the first set at
+all. Splitting the null replicates by whether the fallback fired makes the
+independence explicit:
+
+| null replicates, `select_k = 5` | n | largest support reached | naming a suspect over tau = 0.417 |
+|---|---|---|---|
+| fallback fired (nothing cleared pi = 0.3) | 125 | 0.250 | 0 |
+| threshold cleared on merit | 75 | 0.583 | 25 |
+
+The fallback fires exactly when every support falls below pi = 0.3, and
+tau(0.05) = 0.417 exceeds pi, so every replicate it fires on is already silent
+under the calibrated rule. The null worlds that survive calibration are entirely
+those in which the attribution estimator assigned a pure-noise sensor a
+genuinely high bootstrap support. The guards are therefore not the mechanism
+behind the false-discovery rate at either depth, and the residual error-control
+gap is attributable to the estimator by measurement rather than by elimination.
+
+Two cautions follow, and we state both because we needed both. The first is the
+familiar one about operating points: a component that appears inert at one
+setting — the fallback fired on 0% of replicates and looked like dead code — can
+be active at another, so ablations of agent pipelines should report the
+operating point they were run at. The second is less familiar and cost us more:
+when a pipeline maintains several internal sets with different emptiness
+semantics, a rate measured on one of them does not license a claim about
+another. The "prediction set left empty: 0.0%" row above cannot be anything
+other than 0.0%, because these runs disable abstention by configuration
+(`report_tau = None`); we briefly read it as a measured limitation. Reporting
+which set each rate is computed over is not pedantry in systems of this shape,
+it is the difference between a result and an artifact.
 
 ---
 
@@ -429,6 +458,56 @@ failure is in the premise, not the implementation -- which is a claim about when
 to deploy such a pipeline, and it is testable before deployment by measuring
 signal concentration rather than by running the agent loop and hoping.
 
+### 7.1 Separating the attribution statistic from the architecture around it
+
+The ablations reported so far add the pipeline's mechanisms one at a time over a
+fixed attribution statistic — held-out permutation importance — so they can only
+price the mechanisms. Reading the same measurement as a 2x2 over
+{bare ranker, full pipeline} x {permutation, model-native attribution} prices
+the statistic as well. `agent_model` is the identical pipeline with one
+configuration field changed; `rf_impurity` is the bare-ranker cell for the
+model-native statistic, since it ranks by essentially the quantity that setting
+averages, and `perm_only` is the bare-ranker cell for permutation because it is
+the attribution step with nothing after it. Top-5 selection stability over 200
+bootstrap replicates:
+
+|  | permutation attribution | model-native attribution | statistic is worth |
+|---|---|---|---|
+| bare ranker | `perm_only` 20.0% | `rf_impurity` 36.5% | +16.4 |
+| full pipeline | `agent` 22.3% | `agent_model` 35.3% | +13.0 |
+| architecture is worth | +2.3 | −1.1 | |
+
+The asymmetry is the result. Changing the attribution statistic is worth +13.0
+points to the pipeline and makes it 2.8x cheaper (40.3 to 14.6 minutes).
+Changing the architecture — screen, correlation grouping, bootstrap
+verification, drop — is worth +2.3 points over the noisier statistic and −1.1
+over the better one; both lie inside one standard deviation of the
+replicate-to-replicate spread (15.2 points) and they point in opposite
+directions. On this dataset the pipeline's selection stability is close to a
+function of which importance statistic it consumes, and the multi-agent
+structure around that statistic is approximately a no-op in both directions.
+
+The right-hand column states it most sharply: `agent_model` runs a screen, a
+correlation grouping, a bootstrap verification pass and a drop step over roughly
+what `rf_impurity` reports directly, takes 14.1x longer, and finishes 1.1 points
+behind it.
+
+This was run as a pre-registered prediction rather than as a sweep, which is why
+we report it as a decomposition rather than as a tuning result. The prediction —
+that the swap would land near `rf_impurity` and would not reach the 80% target —
+was recorded before the run, alongside the competing explanation on record in
+this project, that the sample-size wall dominates and ranker choice is
+second-order, which predicted no movement from 22.3%. The first holds and the
+second is refuted by 13.0 points. The target is still missed by 44.7 points, and
+the decomposition was never an attempt to reach it: it identifies which
+component a practitioner should change, and the answer is not the one the
+architecture is named after.
+
+We note that we have no published figure for top-5 root-cause selection
+stability on SECOM to compare against; the literature on this dataset reports
+classification performance. The 80% figure is a project target, and the only
+comparisons we can make honestly are the internal ones above.
+
 ---
 
 ## 8. Forward in time
@@ -487,6 +566,22 @@ the baseline had been pinned at a selection depth that made its statistic
 degenerate. The finding survived only because every number in the write-up was
 generated from a run artefact by a script, so re-running turned a refuted
 sentence into a diff instead of leaving it in the paper.
+
+And say which internal set each rate is computed over. Pipelines of this shape
+keep several — candidates, the set the model is fitted on, the set the user is
+shown — with different emptiness semantics and different guards protecting them.
+We twice attributed a rate measured over one of them to a mechanism acting on
+another, and in both cases the error was caught by reading the implementation
+rather than by running anything further. A rate whose denominator is a set the
+reader cannot identify is not yet a result.
+
+Finally, separate the statistic from the structure before concluding anything
+about the structure. Every ablation we ran for one revision held the attribution
+statistic fixed, so all of them priced the multi-agent machinery and none of
+them priced the quantity it was arranged around. When we finally varied it (§7.1)
+it moved the headline metric by an order of magnitude more than the architecture
+did, in a pipeline whose entire contribution is the architecture. This is cheap
+to check and it should be checked first.
 
 ---
 
