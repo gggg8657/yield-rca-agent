@@ -159,6 +159,7 @@ def main():
                               "correlation alone cannot find the causal set"},
         "protocol": {
             "seeds": a.seeds,
+            "k": a.k,
             "recovery": f"top-{a.k} vs the planted causal set, on the full dataset",
             "auc": f"StratifiedKFold({a.cv_splits}) per seed, "
                    f"{a.seeds * a.cv_splits} folds pooled",

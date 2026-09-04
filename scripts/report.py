@@ -737,7 +737,8 @@ def sec_synthetic(sy):
     if not sy or "agent" not in sy.get("recovery", {}):
         return []
     rec, auc = sy["recovery"], sy["auc"]
-    k = sy["protocol"]["recovery"].split("-")[0].replace("top", "").strip() or "5"
+    m_k = re.search(r"top-(\d+)", sy["protocol"]["recovery"])
+    k = m_k.group(1) if m_k else str(sy.get("k", 5))
     rows = []
     for m in sorted(rec, key=lambda m: -rec[m]["topk_recall"]["mean"]):
         r = rec[m]
@@ -964,6 +965,14 @@ def sec_kpi(ev, st, prof):
          "agent loop, cluster-aware pairwise, bootstrap",
          pct(ag["cluster"]["pairwise_overlap"]), v4],
     ]
+    cvs = st["rankers"]["agent"].get("cv_train")
+    if cvs:
+        v5, _ = verdict(cvs["raw"]["pairwise_overlap"], KPI_STABILITY)
+        rows.append([
+            f"top-5 cause stability >= {KPI_STABILITY:.0%}",
+            "agent loop, pairwise, CV training folds (the gentler "
+            "perturbation -- shown so the choice of protocol is visible)",
+            pct(cvs["raw"]["pairwise_overlap"]), v5])
     return ["## KPI scorecard", "",
             "The catalog target for this project is "
             f"`SECOM real-data AUC >= {KPI_AUC:.2f}` and "
