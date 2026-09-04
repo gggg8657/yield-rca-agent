@@ -12,7 +12,9 @@ asserted.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -56,6 +58,33 @@ def pct(x, nd=1):
 def verdict(value, target, higher_is_better=True):
     ok = value >= target if higher_is_better else value <= target
     return ("**met**" if ok else "**not met**"), ok
+
+
+def paired_delta(a, b, conf=0.95):
+    """Paired mean difference a - b with a Student-t CI.
+
+    Duplicated from ``yieldrca.evaluate`` on purpose: this script reads JSON
+    and writes Markdown, and keeping it importable without the package (or
+    scipy) means the report can always be regenerated from a checkout.
+    """
+    d = [x - y for x, y in zip(a, b)]
+    n = len(d)
+    m = sum(d) / n
+    if n < 2:
+        return {"mean": m, "ci_lo": m, "ci_hi": m, "n": n,
+                "wins": sum(1 for v in d if v > 0),
+                "losses": sum(1 for v in d if v < 0)}
+    sd = math.sqrt(sum((v - m) ** 2 for v in d) / (n - 1))
+    # Student-t 97.5th percentile, df = n - 1 (table; no scipy dependency)
+    T = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
+         7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228, 15: 2.131, 20: 2.086,
+         24: 2.064, 30: 2.042}
+    df = n - 1
+    t = T.get(df) or T[min(T, key=lambda k: abs(k - df))]
+    h = t * sd / math.sqrt(n)
+    return {"mean": m, "ci_lo": m - h, "ci_hi": m + h, "n": n,
+            "wins": sum(1 for v in d if v > 0),
+            "losses": sum(1 for v in d if v < 0)}
 
 
 def crosses_zero(d):
@@ -194,6 +223,8 @@ def sec_secom_auc(ev):
     d_agent_vs_univ = auc["paired"]["agent_rf__vs__univar_top25_rf"]
     nsel = [r["n_selected"] for r in ev["records"] if r["arm"] == "agent_rf"]
     nsel_mean = sum(nsel) / len(nsel)
+    ncand = [r["n_candidates"] for r in ev["records"] if r["arm"] == "agent_rf"]
+    ncand_mean = sum(ncand) / len(ncand)
 
     lead = (
         f"{auc['n_folds']} folds, identical for every arm "
@@ -215,8 +246,9 @@ def sec_secom_auc(ev):
         f"runs.", "",
         f"The agent loop scores {agent['mean']:.3f} "
         f"[{agent['ci_lo']:.3f}, {agent['ci_hi']:.3f}] while handing the final "
-        f"classifier only {nsel_mean:.0f} of the "
-        f"{ev['protocol']['agent_cfg']['n_screen']}-sensor candidate pool. "
+        f"classifier {nsel_mean:.0f} sensors on average -- screened from the "
+        f"survivors down to {ncand_mean:.0f} cluster representatives, then "
+        f"cut again by the bootstrap drop. "
         f"Paired against the baseline that is {signed(d_agent, 3)} AUC "
         f"({d_agent['wins']} folds better, {d_agent['losses']} worse, "
         f"Wilcoxon p = {d_agent.get('wilcoxon_p', float('nan')):.1e}). "
@@ -268,7 +300,7 @@ def sec_secom_auc(ev):
     return body
 
 
-def sec_rolling(ev):
+def sec_rolling(ev, prof=None):
     if not ev or "rolling_origin" not in ev:
         return []
     ro = ev["rolling_origin"]
@@ -284,33 +316,84 @@ def sec_rolling(ev):
                      " · ".join(f"{r['auc']:.3f}" for r in per)])
     real = [a for a in ro if a != "majority"]
     best = max(real, key=lambda a: ro[a]["summary"]["mean"])
+    best_shuffled = max(real, key=lambda a: auc[a]["mean"])
     sizes = ro[names[0]]["per_origin"]
-    return ["## Does it survive going forward in time?", "",
+    kind_word = {"agent": "an agent arm", "control": "a selection control",
+                 "baseline": "a baseline"}
+    kinds = {k: kind_word.get(v["kind"], v["kind"])
+             for k, v in ev["arms"].items()}
+    nsel = [r["n_selected"] for r in ev["records"] if r["arm"] == "agent_rf"]
+    n_sel_mean = (sum(nsel) / len(nsel)) if nsel else None
+
+    # is the shuffled-CV ordering preserved forward in time?
+    pairs = list(itertools.combinations(real, 2))
+    conc = sum(1 for a, b in pairs
+               if (auc[a]["mean"] - auc[b]["mean"])
+               * (ro[a]["summary"]["mean"] - ro[b]["summary"]["mean"]) > 0)
+    # paired over origins: does the loop actually beat the baseline here?
+    d = None
+    if "agent_rf" in ro and "rf_all" in ro:
+        d = paired_delta([r["auc"] for r in ro["agent_rf"]["per_origin"]],
+                         [r["auc"] for r in ro["rf_all"]["per_origin"]])
+
+    body = ["## Does it survive going forward in time?", "",
             f"One chronological split can be one unlucky fortnight, so the "
             f"same question is asked at every origin: "
-            f"{ev['protocol']['rolling_origin']['rule']}. That is the only "
-            f"protocol that answers *would this have worked had we deployed "
-            f"it* -- it never trains on a wafer that came after the wafer it "
-            f"scores.", "",
+            f"{ev['protocol']['rolling_origin']['rule']}. This is the only "
+            f"protocol here that answers *would this have worked had we "
+            f"deployed it* -- it never trains on a wafer produced after the "
+            f"one it scores.", "",
             table(rows, ["arm", "shuffled CV", "chrono 70/30",
                          f"rolling origin, mean of {n_orig} (95% CI)",
                          "per origin"]), "",
-            f"Test-block sizes grow from {sizes[0]['n_test']} wafers "
+            f"Two things happen at once here, and only one of them is solid.",
+            "",
+            f"**Solid: everything degrades.** The best shuffled-CV arm "
+            f"(`{best_shuffled}`, {auc[best_shuffled]['mean']:.3f}) drops to "
+            f"{ro[best_shuffled]['summary']['mean']:.3f} "
+            f"[{ro[best_shuffled]['summary']['ci_lo']:.3f}, "
+            f"{ro[best_shuffled]['summary']['ci_hi']:.3f}] forward in time, "
+            f"and every arm's rolling-origin CI "
+            + ("includes 0.5"
+               if all(ro[a]["summary"]["ci_lo"] <= 0.5 for a in real)
+               else "is wide enough to matter")
+            + f". Whatever SECOM's shuffled-CV skill is made of, a substantial "
+              f"part of it does not survive being asked to predict the next "
+              f"block of wafers.", "",
+            f"**Not solid: the ranking inverts.** Only {conc} of the "
+            f"{len(pairs)} arm pairs keep their shuffled-CV order, and the "
+            f"best arm forward in time is `{best}` "
+            f"({ro[best]['summary']['mean']:.3f}"
+            f"{'' if best == best_shuffled else ', ' + kinds.get(best, 'an arm')}"
+            f") rather than `{best_shuffled}`. "
+            + (f"Paired over the {n_orig} origins, the agent loop is "
+               f"{signed(d, 3)} against the full-sensor forest -- "
+               + ("an interval that includes zero, so this is a *suggestion*, "
+                  "not a result. "
+                  if crosses_zero(d) else "an interval clear of zero. ")
+               if d else "")
+            + (f"The mechanism is plausible -- a model holding "
+               f"{n_sel_mean:.0f} sensors has fewer ways to lean on one that "
+               f"drifts than one holding all "
+               f"{prof['cleaner']['sensors_kept'] if prof else 'of them'}, "
+               f"so selection should pay off exactly when the test "
+               f"distribution moves"
+               if (n_sel_mean and prof) else "The mechanism is plausible")
+            + f" -- and that is a reason to test it properly, not to claim "
+              f"it. {n_orig} origins with per-origin AUCs spanning "
+            + f"{min(r['auc'] for a in real for r in ro[a]['per_origin']):.3f}"
+              f" to "
+            + f"{max(r['auc'] for a in real for r in ro[a]['per_origin']):.3f}"
+              f" cannot settle it.", "",
+            f"Test blocks grow from {sizes[0]['n_test']} wafers "
             f"({sizes[0]['n_fail_test']} fails) as the training window "
-            f"expands, so the individual origins are noisy -- but the "
-            f"conclusion does not depend on any one of them. The best arm "
-            f"forward in time is `{best}` at "
-            f"{ro[best]['summary']['mean']:.3f} "
-            f"[{ro[best]['summary']['ci_lo']:.3f}, "
-            f"{ro[best]['summary']['ci_hi']:.3f}], against "
-            f"{auc[best]['mean']:.3f} for the same arm under shuffled CV."
-            + (" Every arm's rolling-origin CI includes 0.5."
-               if all(ro[a]["summary"]["ci_lo"] <= 0.5 for a in real) else
-               " At least one arm stays clear of chance.")
-            + " The honest reading is that SECOM's shuffled-CV skill comes "
-              "substantially from interpolating across a 90-day drift, and "
-              "that a yield predictor trained this way should not be expected "
-              "to hold for the next month of wafers without retraining.", ""]
+            f"expands, so individual origins are noisy by construction. The "
+            f"honest summary: SECOM's shuffled-CV numbers are the optimistic "
+            f"ones, a yield predictor trained this way should not be expected "
+            f"to hold for the next month of wafers without retraining, and "
+            f"whether sparse attribution helps under drift is the experiment "
+            f"this dataset is too small to run.", ""]
+    return body
 
 
 def sec_sweep(sw):
@@ -709,6 +792,27 @@ def sec_headline(ev, st, sy, sw, prof=None):
           f"the scorecard reports -- but the forward-in-time number is the one "
           f"an engineer should believe."
         if prof else "")
+    ro = ev.get("rolling_origin")
+    if ro and "agent_rf" in ro and "rf_all" in ro:
+        dro = paired_delta([r["auc"] for r in ro["agent_rf"]["per_origin"]],
+                           [r["auc"] for r in ro["rf_all"]["per_origin"]])
+        real = [a for a in ro if a != "majority"]
+        best_ro = max(real, key=lambda a: ro[a]["summary"]["mean"])
+        L.append(
+            f"- **One result points the other way, and it is the weakest one "
+            f"here.** Forward in time the ordering inverts: the best arm "
+            f"across origins is `{best_ro}` at "
+            f"{ro[best_ro]['summary']['mean']:.3f}, and the agent loop is "
+            f"{signed(dro, 3)} against the full-sensor forest instead of "
+            f"behind it. Selecting fewer sensors plausibly helps precisely "
+            f"when the test distribution has moved. But that interval "
+            + ("includes zero over only "
+               f"{ev['protocol']['rolling_origin']['n_origins']} origins, so "
+               "it is a hypothesis worth a bigger dataset, not a finding."
+               if crosses_zero(dro) else
+               f"is clear of zero over "
+               f"{ev['protocol']['rolling_origin']['n_origins']} origins -- "
+               "suggestive, but four origins is four origins."))
     if sy:
         r = sy["recovery"]["agent"]
         L.append(
@@ -803,7 +907,7 @@ def build(runs: Path):
     L += sec_kpi(ev, st, prof)
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
-    L += sec_rolling(ev)
+    L += sec_rolling(ev, prof)
     L += sec_sweep(sw)
     L += sec_stability(st)
     L += sec_synthetic(sy)
@@ -850,7 +954,8 @@ README_BLOCKS = {
     "stability": lambda d: "\n".join(sec_stability(d["st"])[2:]).strip(),
     "synthetic": lambda d: "\n".join(sec_synthetic(d["sy"])[2:]).strip(),
     "sweep": lambda d: "\n".join(sec_sweep(d["sw"])[2:]).strip(),
-    "rolling": lambda d: "\n".join(sec_rolling(d["ev"])[2:]).strip(),
+    "rolling": lambda d: "\n".join(
+        sec_rolling(d["ev"], d["prof"])[2:]).strip(),
 }
 
 

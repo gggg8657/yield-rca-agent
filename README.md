@@ -33,7 +33,8 @@ narrating the same tool output would add prose rather than evidence.
 - **The AUC KPI is met, by the baseline.** A plain random forest with fold-internal cleaning and median imputation scores **0.759** [0.739, 0.779] ROC-AUC over 25 folds of repeated stratified CV, so the >= 0.75 target is **met** before any agent runs. That is squarely inside the 0.70-0.80 band published for SECOM; anything far above it on this dataset is a leak, not a result.
 - **The agent loop does not beat that baseline -- it loses to it.** Same folds, paired per fold: **-0.042 [-0.058, -0.025]** AUC (4 folds better, 21 worse, Wilcoxon p = 6.4e-05). At its pre-registered operating point the loop reaches 0.717 and misses the KPI on its own, and it does not separate from a univariate top-25 selection at the same sparsity (-0.012 [-0.028, +0.004], an interval that includes zero). The plan/verify machinery is not what is buying the number.
 - **Sparsity is the price, and it is not negotiable.** Sweeping the loop's settings, AUC tracks how many sensors survive. The leanest configuration whose paired CI still reaches the baseline is `agent_operating_model` at -0.0262 [-0.0524, +0.0000], keeping about 25 sensors -- but that CI only just touches zero, so read it as a boundary case rather than a tie; the leanest *unambiguous* tie keeps about 45. The loop can match a full-sensor forest, but only by declining to be a shortlist -- every setting that returns a list short enough for an engineer to work through is measurably worse.
-- **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
+- **Shuffled CV flatters this dataset.** Train on the earliest 1097 wafers and test on the last 470, and the best baseline falls from 0.759 to **0.532** -- near chance, with every arm collapsing (worst: `hgb_all` at 0.482). Repeating the exercise at every origin -- train on the past, test on the next block of wafers -- puts the best arm at 0.656 (`agent_rf`), so this is not one unlucky split. Over the 90 days of a single campaign the sensor distributions drift, and a shuffled split lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard reports -- but the forward-in-time number is the one an engineer should believe.
+- **One result points the other way, and it is the weakest one here.** Forward in time the ordering inverts: the best arm across origins is `agent_rf` at 0.656, and the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest instead of behind it. Selecting fewer sensors plausibly helps precisely when the test distribution has moved. But that interval includes zero over only 4 origins, so it is a hypothesis worth a bigger dataset, not a finding.
 <!-- END:headline -->
 
 Full tables, protocol and provenance: [`RESULTS.md`](RESULTS.md). Every figure
@@ -130,9 +131,9 @@ The count of what each rule removes is in the dataset table above, measured by
 
 The best arm is `rf_all` at 0.759. A plain random forest with fold-internal cleaning and median imputation reaches **0.759** [0.739, 0.779], so the AUC KPI (>= 0.75) is **met** -- by the baseline, before any agent runs.
 
-The agent loop scores 0.717 [0.699, 0.735] while handing the final classifier only 20 of the 150-sensor candidate pool. Paired against the baseline that is -0.042 [-0.058, -0.025] AUC (4 folds better, 21 worse, Wilcoxon p = 6.4e-05). That interval excludes zero: **the agent loop does not beat the obvious baseline on SECOM, it loses to it.**
+The agent loop scores 0.717 [0.699, 0.735] while handing the final classifier 20 sensors on average -- screened from the survivors down to 60 cluster representatives, then cut again by the bootstrap drop. Paired against the baseline that is -0.042 [-0.058, -0.025] AUC (4 folds better, 21 worse, Wilcoxon p = 6.4e-05). That interval excludes zero: **the agent loop does not beat the obvious baseline on SECOM, it loses to it.**
 
-The naive-selection control tells us how much of that is selection per se rather than this particular selector: univariate top-25 into the same forest is -0.029 [-0.041, -0.018] against the baseline, and the agent loop beats *it* by -0.012 [-0.028, +0.004] -- an interval that straddles zero, so the plan/verify machinery buys no measurable accuracy over ranking each sensor on its own.
+The naive-selection control tells us how much of that is selection per se rather than this particular selector: univariate top-25 into the same forest is -0.029 [-0.041, -0.018] against the baseline, and the agent loop differs from *it* by -0.012 [-0.028, +0.004] -- an interval that straddles zero, so the plan/verify machinery buys no measurable accuracy over ranking each sensor on its own.
 
 The chronological column trains on the earliest 1097 wafers and tests on the last 470 (26 fails). 6 of the 6 non-trivial arms score lower there than under shuffled CV; `rf_all` falls from 0.759 to 0.532, and the whole field lands between 0.482 (`hgb_all`) and 0.585 (`univar_top25_rf`). That is close enough to chance to say the plain reading out loud: **forward in time, none of these models has much predictive power on SECOM.** Over the 1567 wafers of a 90-day campaign the sensor distributions drift, and a shuffled split quietly lets the model interpolate across drift it would never see in production. The KPI is stated against the shuffled protocol, so that is what the scorecard scores -- but this column is the one that decides whether the thing is deployable.
 <!-- END:secom_auc -->
@@ -140,7 +141,25 @@ The chronological column trains on the earliest 1097 wafers and tests on the las
 ![SECOM AUC by arm, with 95% confidence intervals](assets/fig_secom_auc.png)
 
 <!-- BEGIN:rolling -->
+One chronological split can be one unlucky fortnight, so the same question is asked at every origin: 5 contiguous time blocks; train on blocks 0..k, test on block k+1, for k = 0..3. This is the only protocol here that answers *would this have worked had we deployed it* -- it never trains on a wafer produced after the one it scores.
 
+| arm | shuffled CV | chrono 70/30 | rolling origin, mean of 4 (95% CI) | per origin |
+|---|---|---|---|---|
+| `agent_rf` | 0.717 | 0.535 | 0.656 [0.495, 0.816] | 0.563 · 0.721 · 0.762 · 0.576 |
+| `univar_top25_rf` | 0.730 | 0.585 | 0.644 [0.399, 0.888] | 0.510 · 0.863 · 0.622 · 0.578 |
+| `hgb_all` | 0.721 | 0.482 | 0.597 [0.373, 0.820] | 0.512 · 0.782 · 0.626 · 0.467 |
+| `rf_all` | 0.759 | 0.532 | 0.585 [0.349, 0.821] | 0.450 · 0.780 · 0.618 · 0.491 |
+| `agent_logreg` | 0.656 | 0.511 | 0.559 [0.367, 0.750] | 0.579 · 0.612 · 0.385 · 0.659 |
+| `logreg_all` | 0.687 | 0.559 | 0.513 [0.271, 0.755] | 0.381 · 0.502 · 0.441 · 0.729 |
+| `majority` | 0.500 | 0.500 | 0.500 [0.500, 0.500] | 0.500 · 0.500 · 0.500 · 0.500 |
+
+Two things happen at once here, and only one of them is solid.
+
+**Solid: everything degrades.** The best shuffled-CV arm (`rf_all`, 0.759) drops to 0.585 [0.349, 0.821] forward in time, and every arm's rolling-origin CI includes 0.5. Whatever SECOM's shuffled-CV skill is made of, a substantial part of it does not survive being asked to predict the next block of wafers.
+
+**Not solid: the ranking inverts.** Only 9 of the 15 arm pairs keep their shuffled-CV order, and the best arm forward in time is `agent_rf` (0.656, an agent arm) rather than `rf_all`. Paired over the 4 origins, the agent loop is +0.071 [-0.072, +0.214] against the full-sensor forest -- an interval that includes zero, so this is a *suggestion*, not a result. The mechanism is plausible -- a model holding 20 sensors has fewer ways to lean on one that drifts than one holding all 474, so selection should pay off exactly when the test distribution moves -- and that is a reason to test it properly, not to claim it. 4 origins with per-origin AUCs spanning 0.381 to 0.863 cannot settle it.
+
+Test blocks grow from 314 wafers (21 fails) as the training window expands, so individual origins are noisy by construction. The honest summary: SECOM's shuffled-CV numbers are the optimistic ones, a yield predictor trained this way should not be expected to hold for the next month of wafers without retraining, and whether sparse attribution helps under drift is the experiment this dataset is too small to run.
 <!-- END:rolling -->
 
 ![shuffled CV versus a chronological split, per arm](assets/fig_protocol.png)
@@ -150,7 +169,7 @@ The agent loop's structural settings are fixed in advance rather than tuned, whi
 
 | arm | attribution | vote k / threshold / cap | sensors selected | ROC-AUC (95% CI) | paired delta vs `rf_all` |
 |---|---|---|---|---|---|
-| `rf_all` | -- | -- | all | 0.766 [0.731, 0.801] | -- |
+| `rf_all` | -- | -- | -- | 0.766 [0.731, 0.801] | -- |
 | `agent_no_drop_model` | model | 474 / 0.0 / 474 | 256.4 | 0.763 [0.733, 0.793] | -0.003 [-0.017, +0.011] |
 | `agent_loose_model` | model | 100 / 0.15 / 150 | 82.0 | 0.760 [0.729, 0.791] | -0.006 [-0.028, +0.016] |
 | `agent_wide_model` | model | 60 / 0.2 / 60 | 55.8 | 0.754 [0.720, 0.788] | -0.012 [-0.031, +0.007] |
@@ -158,7 +177,7 @@ The agent loop's structural settings are fixed in advance rather than tuned, whi
 | `agent_no_drop_permutation` | permutation | 474 / 0.0 / 474 | 160.1 | 0.744 [0.707, 0.781] | -0.022 [-0.049, +0.005] |
 | `agent_operating_model` | model | 40 / 0.3 / 25 | 25.0 | 0.740 [0.706, 0.774] | -0.026 [-0.052, +0.000] |
 | `agent_wide_permutation` | permutation | 60 / 0.2 / 60 | 32.8 | 0.736 [0.703, 0.770] | -0.029 [-0.058, -0.001] |
-| `univar_top25_rf` | -- | -- | all | 0.729 [0.693, 0.766] | -0.037 [-0.060, -0.013] |
+| `univar_top25_rf` | -- | -- | -- | 0.729 [0.693, 0.766] | -0.037 [-0.060, -0.013] |
 | `agent_operating_permutation` | permutation | 40 / 0.3 / 25 | 20.6 | 0.724 [0.691, 0.757] | -0.042 [-0.072, -0.012] |
 | `agent_sparse_model` | model | 20 / 0.5 / 25 | 7.1 | 0.697 [0.664, 0.731] | -0.068 [-0.097, -0.039] |
 | `agent_sparse_permutation` | permutation | 20 / 0.5 / 25 | 3.5 | 0.658 [0.631, 0.686] | -0.108 [-0.147, -0.069] |
