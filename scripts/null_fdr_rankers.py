@@ -25,8 +25,15 @@ and ``select_k`` from ``AGENT_CFG`` rather than a convenient value, and is
 scored with the identical ``max`` statistic. A difference in separation is then
 a difference in the ranker, which is the thing being compared.
 
-Cleaning is fitted inside each bootstrap resample, as everywhere else in this
-repo, so no arm sees a decision made on rows it is scored against.
+**Where the cleaning sits.** ``SensorCleaner`` is fitted once per replicate on
+the full matrix, *outside* the bootstrap loop -- not inside each resample. That
+is deliberate and it is stated here because an earlier version of this docstring
+claimed the opposite and was wrong. The cleaner is unsupervised: it drops
+all-missing, constant and exactly-duplicated columns using ``X`` alone, never
+``y``. A label permutation cannot change which columns are constant, so this
+leaks nothing into the null and both arms are treated identically --
+``AgentRCA.fit`` cleans once on its training matrix in exactly the same way. The
+protocol is sound; the previous description of it was not.
 
     OMP_NUM_THREADS=1 python scripts/null_fdr_rankers.py --null 200 --real 40 --jobs 16
 """
@@ -268,7 +275,34 @@ def main():
                        f"and select_k={select_k} from AGENT_CFG, and the "
                        f"identical max-over-sensors statistic, so a difference "
                        f"in separation is a difference in the ranker",
-            "leakage_control": "SensorCleaner fitted inside each resample",
+            "leakage_control": "SensorCleaner is fitted once per replicate on "
+                               "the full matrix, outside the bootstrap loop. It "
+                               "is unsupervised (drops all-missing, constant "
+                               "and duplicate columns from X alone, never y), "
+                               "so a label permutation cannot change its "
+                               "output and it leaks nothing into the null. "
+                               "AgentRCA.fit cleans the same way, so the arms "
+                               "are matched on this too.",
+            "separation_confound": "'real' replicates reuse the same labels and "
+                                   "matrix, varying only bootstrap randomness, "
+                                   "so P(real > null) rewards a ranker that is "
+                                   "repeatable as well as one that detects "
+                                   "signal. A near-deterministic ranker is "
+                                   "favoured on this column relative to the "
+                                   "agent loop, which carries far more internal "
+                                   "stochasticity. The error-control columns do "
+                                   "not share this confound.",
+            "report_length_caveat": "'suspects reported' counts survivors of "
+                                    "tau from different candidate universes -- "
+                                    "all surviving sensors for a plain ranker, "
+                                    "correlation-group representatives admitted "
+                                    "to verification for the agent loop. It is "
+                                    "a power/cost trade-off, not an accuracy "
+                                    "axis: without ground-truth causes a longer "
+                                    "list is not self-evidently better.",
+            "splits_caveat": "repeated partitions reduce partition noise; they "
+                             "do not create new evidence beyond the "
+                             "n_null + n_real replicates actually run",
             "n_null": a.null, "n_real": a.real, "top_k": top_k,
             "agent_arm_source": a.agent if agent else None,
         },
@@ -284,7 +318,14 @@ def main():
                               "to an arbitrary level: no tau <= 1 excludes "
                               "those replicates, so max_attainable_null_"
                               "abstention caps the error control that arm can "
-                              "ever offer, whatever its separation",
+                              "offer under the rule actually implemented here "
+                              "(report iff support >= tau, tau <= 1). Two "
+                              "escapes exist and neither is used: tau > 1 "
+                              "abstains always, at zero power, and a randomised "
+                              "boundary rule could interpolate intermediate "
+                              "levels. The cap is a property of this discrete "
+                              "max statistic at this bootstrap count and "
+                              "selection depth, not of the ranker itself.",
         "per_ranker": per,
         "records": recs,
     }

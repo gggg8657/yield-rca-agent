@@ -1146,10 +1146,13 @@ def sec_headline(ev, st, sy, sw, prof=None, dr=None, rsw=None,
                 f"suspects against "
                 f"{ag['heldout_alpha_0.05']['real_reported_mean']:.2f}"
                 + (" -- with no permutation-importance pass, no correlation "
-                   "grouping and no verification loop. **The loop has no "
-                   "measured advantage on any axis in this repository: not "
-                   "accuracy, not stability, not separation, not calibratable "
-                   "error control.**" if wins_both else
+                   "grouping and no verification loop. **So on every axis "
+                   "measured here the loop is matched or beaten by a "
+                   "univariate ranker.** Two caveats travel with that: the "
+                   "selection depth was probed for the baseline and not for "
+                   "the loop, and the separation column rewards a repeatable "
+                   "ranker as well as a discriminating one. Both are detailed "
+                   "in the section below." if wins_both else
                    ", so the two are close on this axis -- and the plain "
                    "ranker needs no permutation-importance pass, no "
                    "correlation grouping and no verification loop."))
@@ -1416,8 +1419,17 @@ def sec_ranker_fdr(rk):
         f"threshold work at all. So: {pr['question']} "
         f"Comparing raw false-discovery rates would settle nothing -- "
         f"{pr['why_not_fdr']}.", "",
-        f"**Matched by construction:** {pr['matched']}. Cleaning is fitted "
-        f"inside each resample, and the held-out calibration is the same "
+        f"**Matched by construction:** {pr['matched']}. "
+        # Stated from the verified source, not from the JSON's own field: an
+        # earlier run recorded "fitted inside each resample" there, which was
+        # wrong, and that string survives in any JSON written before the fix.
+        + "`SensorCleaner` is fitted once per replicate on the full matrix, "
+          "outside the bootstrap loop. It is unsupervised -- it drops "
+          "all-missing, constant and duplicate columns from `X` alone, never "
+          "`y` -- so a label permutation cannot change its output and it leaks "
+          "nothing into the null, and `AgentRCA.fit` cleans the same way, so "
+          "the arms are matched on this too. "
+        + f"The held-out calibration is the same "
         f"split-half procedure `scripts/abstain.py` uses. From "
         f"`scripts/null_fdr_rankers.py` into `runs/null_fdr_rankers.json`; the "
         f"agent row is recomputed from `{pr['agent_arm_source']}` by the same "
@@ -1534,8 +1546,8 @@ def sec_ranker_fdr(rk):
                 f"{pct(1 - b_h['max_attainable_null_abstention'])} of permuted "
                 f"ones too. No threshold at or below 1.000 excludes those, so "
                 f"`{b_k}` is capped at "
-                f"{pct(b_h['max_attainable_null_abstention'])} control however "
-                f"alpha is set -- below the loop's "
+                f"{pct(b_h['max_attainable_null_abstention'])} control for any "
+                f"threshold rule of the form used here -- below the loop's "
                 f"{pct(ag_h['null_abstention_heldout'])}, which is what made "
                 f"the matched comparison alone look like a win for the "
                 f"architecture.", "",
@@ -1557,6 +1569,22 @@ def sec_ranker_fdr(rk):
                 "to. The one place it wins remains the synthetic generator, "
                 "where its premise -- that a few sensors dominate -- is true "
                 "by construction.", "",
+                "**Three things this comparison does not establish**, all "
+                "raised by an adversarial review of it and recorded in "
+                "`critique_log.md`:", "",
+                f"- *Separation is confounded with repeatability.* "
+                f"{pr.get('separation_confound', '')} So the separation column "
+                f"should be read as the weaker of the two, and the "
+                f"error-control column as the one that carries the argument.",
+                f"- *Report length is not an accuracy axis.* "
+                f"{pr.get('report_length_caveat', '')}",
+                f"- *The selection depth was probed for one arm.* "
+                f"`select_k = 5` was chosen because it removes the saturation, "
+                f"and the corresponding agent configuration is a separate run. "
+                f"Until that lands, this table shows a tuned baseline against "
+                f"an untuned loop, which is the right comparison for \"would "
+                f"something simpler have done\" and the wrong one for \"is "
+                f"the architecture worse at equal effort\".", "",
                 "*This paragraph replaces an earlier conclusion in this "
                 "repository's history.* The matched-settings comparison alone "
                 "showed the loop as the only arm able to carry a "

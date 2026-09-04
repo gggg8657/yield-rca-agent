@@ -603,3 +603,98 @@ its depth, predicting little movement when depth changes. H4 predicts the loop
 climbs into the same band. Either way the univariate arm has already cleared it,
 so H4 cannot rescue the architecture — it decides only *why* it loses, which is
 the part a reader should be able to act on.
+
+---
+
+## Turn 7 (2026-09-04) — codex on the H3 comparison, and one real error
+
+Asked `codex exec` to attack the H3 result specifically: is it a fair fight, is
+the held-out calibration sound, is the saturation argument correct, does
+`select_k = 5` give the univariate arm an unearned advantage. It returned six
+objections. Three land, two are precision fixes, one I reject.
+
+### It found a factual error in my own documentation — fixed
+
+> There is also a factual implementation error: both the docstring and RESULTS
+> claim cleaning is fitted inside each bootstrap resample
+> (`null_fdr_rankers.py:28`, `RESULTS.md:266`). In reality it is fitted once on
+> all `X` before the bootstrap loop (`null_fdr_rankers.py:93-100`).
+
+**Correct, and this is the worst kind of error this workspace's rules exist to
+catch: a document describing a protocol the code does not implement.** Verified
+by reading the source — `SensorCleaner().fit(X)` sits above the `for b in
+range(n_boot)` loop.
+
+The result does not move, and the reason matters: `SensorCleaner` is
+*unsupervised*. It drops all-missing, constant and exactly-duplicated columns
+from `X` alone and never touches `y`. A label permutation cannot change which
+columns are constant, so it cannot leak into the null, and `AgentRCA.fit` cleans
+its training matrix the same way — the arms are matched on this too. So the
+protocol is sound and its description was not.
+
+Fixed in three places: the module docstring now states where the cleaner sits
+and why that is sound; the JSON's `leakage_control` field says the same; and
+`RESULTS.md` states it from a verified literal rather than echoing the field,
+because the string "fitted inside each resample" survives in every JSON written
+before this fix. The ranker JSON will be regenerated after the running job
+finishes so its own field is right too.
+
+### Two precision fixes, both accepted
+
+> "capped ... however alpha is set" is false: `tau > 1` yields 100% silence,
+> albeit zero power; randomization at the boundary can attain intermediate
+> error levels.
+
+Right. The cap holds for the rule actually implemented — report iff
+`support >= tau` with `tau <= 1` — and not for a degenerate `tau > 1` (which
+abstains always, at zero power) or a randomised boundary rule. `RESULTS.md` now
+says "for any threshold rule of the form used here", and the JSON's saturation
+note spells out both escapes.
+
+> `P(real max > null max)` measures repeatability of each algorithm on this one
+> observed label vector as much as it measures signal/noise discrimination.
+
+**This is the sharpest point and I had not seen it.** The "real" replicates
+reuse the same labels and the same matrix, varying only bootstrap randomness. A
+univariate ranker is deterministic given a resample; the agent loop carries
+model fitting, screening, inner splits, permutation importance and verification.
+So the loop's real-arm distribution is intrinsically wider, and a wider real-arm
+distribution lowers P(real > null) *without any difference in signal detection*.
+The separation column is therefore confounded in the univariate arm's favour.
+
+It does not touch the error-control column, which is a function of the null
+distribution and the real supports at a threshold, so the argument that carries
+the conclusion survives. `RESULTS.md` now says explicitly that separation is the
+weaker of the two columns and error control is the one doing the work.
+
+> "suspects reported" ... the two counts come from different candidate
+> universes ... Report length is a cost/power tradeoff, not an accuracy axis.
+
+Accepted, both halves. The univariate count is over all surviving sensors; the
+agent's `stability_values` covers only correlation-group representatives
+admitted to verification. And without ground-truth causes a longer list is not
+self-evidently better. Both now stated in the section.
+
+### The objection I reject, and why in one line
+
+> The contrary headline comes from post-hoc tuning only the univariate arm ...
+> The corresponding agent configuration is omitted despite being directly
+> runnable.
+
+Half right and already answered: the asymmetry is real, which is exactly why H4
+(`scripts/null_fdr.py --select-k 5`) was written down as a hypothesis and
+launched **before** this critique arrived, and why `RESULTS.md` now says the
+table is "a tuned baseline against an untuned loop, which is the right
+comparison for *would something simpler have done* and the wrong one for *is the
+architecture worse at equal effort*". What I reject is the framing that this
+invalidates the headline: "would a simpler method have sufficed" is a legitimate
+question with a legitimate answer, and the answer does not become false because
+a second question is also worth asking. But the headline is now qualified rather
+than absolute pending H4.
+
+### What changed as a result
+
+The headline bullet no longer reads "the loop has no measured advantage on any
+axis in this repository". It reads that on every axis measured the loop is
+matched or beaten by a univariate ranker, and it carries both caveats inline.
+That is a weaker claim and it is the one the evidence supports.
