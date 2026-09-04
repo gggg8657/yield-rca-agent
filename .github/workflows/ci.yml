@@ -32,3 +32,5 @@ jobs:
         run: PYTHONPATH=. python tests/test_null.py
       - name: RESULTS.md and the README blocks match runs/*.json
         run: python scripts/report.py --check
+      - name: WEEKEND.md's numbers still trace to runs/*.json
+        run: python scripts/audit_weekend.py

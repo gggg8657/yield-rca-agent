@@ -58,6 +58,7 @@ echo "== report =="
 "$PY" scripts/report.py
 "$PY" scripts/make_figures.py
 "$PY" scripts/report.py --check
+"$PY" scripts/audit_weekend.py
 
 echo "== tests =="
 PYTHONPATH=. "$PY" tests/test_smoke.py
