@@ -435,7 +435,7 @@ and cannot cross them.
 Running the same one-field change at the pre-registered depth does not
 replicate section 5.5 — it inverts it. Error control goes from 91.6% to 88.0%,
 a 3.6-point regression where the identical change at `select_k = 5` was a
-2.2-point gain. And the model-native arm reports **the same 88.0% control at
+2.1-point gain. And the model-native arm reports **the same 88.0% control at
 alpha = 0.05 and alpha = 0.01** while the permutation arm moves normally from
 91.6% to 97.7%. A rate that has stopped responding to alpha is reporting a
 structural constraint.

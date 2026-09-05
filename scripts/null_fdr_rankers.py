@@ -121,6 +121,12 @@ def _one(X, y, permuted, rep, kind, n_boot, select_k, top_k, arm=None):
         "max_stability": float(supp.max()),
         "n_at_or_above_half": int((supp >= 0.5).sum()),
         "stability_values": sorted(supp[supp > 0].tolist(), reverse=True)[:60],
+        # Per-sensor support in ORIGINAL index space, so a tau-thresholded
+        # report can be reconstructed from the record rather than only its
+        # length. See the matching field in scripts/null_fdr.py.
+        "support_by_sensor": sorted(
+            ([int(keep[j]), float(supp[j])] for j in np.flatnonzero(supp > 0)),
+            key=lambda t: -t[1])[:60],
         "top5": top,
     }
 

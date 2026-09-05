@@ -2029,7 +2029,7 @@ def sec_sparsity(sp):
             "two statistics are indistinguishable, so **the deficit is "
             "sparsity price essentially in full**. The attribution statistic "
             "is worth 13 points of selection stability and, at a suitable "
-            "depth, 2.2 points of error control -- and nothing at all on "
+            "depth, 2.1 points of error control -- and nothing at all on "
             "accuracy.", "",
             "This also settles which of two things this repository said about "
             "the same number was right. The caveat attached to H7 -- read "

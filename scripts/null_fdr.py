@@ -85,6 +85,14 @@ def _one(X, y, permuted: bool, rep: int, base: str, over=None):
         "max_stability": float(max(stab.values())) if stab else 0.0,
         "max_stability_top5": float(max(stab_top.values())) if stab_top else 0.0,
         "stability_values": sorted(stab.values(), reverse=True),
+        # Per-sensor support in ORIGINAL index space. `stability_values` alone
+        # cannot say *which* sensors clear a threshold, so any question about
+        # the composition of the reported set -- H10's deduplication question,
+        # for one -- was unanswerable from disk. Recording the pairs makes the
+        # tau-thresholded report reconstructible after the fact.
+        "support_by_sensor": sorted(
+            ([int(est.cleaner_.keep_[j]), float(v)] for j, v in stab.items()),
+            key=lambda t: -t[1])[:60],
         "top5": [int(j) for j in est.ranking()[:5]],
         "selected": [int(j) for j in est.selected_original_],
     }

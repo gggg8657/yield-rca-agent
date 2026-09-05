@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -47,6 +48,9 @@ def claims(d):
     nfm, abm = d.get("null_fdr_model"), d.get("abstain_model")
     out = []
 
+    if ev and ev.get("chronological", {}).get("rf_all"):
+        out.append(("rf_all chronological AUC", "secom_eval",
+                    f"{ev['chronological']['rf_all']['auc']:.3f}"))
     if ev:
         a = ev["auc"]["per_arm"]
         p = ev["auc"]["paired"]["agent_rf__vs__rf_all"]
@@ -318,6 +322,19 @@ def claims(d):
                 (f"calibration loss: {lab}", "calib_size",
                  f"{m100.get('calibration_loss', float('nan')):+.3f}"),
             ]
+    # Deltas quoted in the summary table. Derived, so computed from the raw
+    # values rather than from the rounded percentages they are printed as --
+    # that mistake put "-1.2" and "14.6x" into this document once.
+    if ab5m and ab5 and (ab5m.get("levels") or {}).get("alpha_0.05"):
+        d5 = (100 * ab5m["levels"]["alpha_0.05"]["null_abstention_heldout"]
+              - 100 * ab5["levels"]["alpha_0.05"]["null_abstention_heldout"])
+        out.append(("attribution delta on control, k=5", "abstain_k5_model",
+                    f"{d5:+.1f}"))
+    if abm and ab and (abm.get("levels") or {}).get("alpha_0.05"):
+        d40 = (100 * abm["levels"]["alpha_0.05"]["null_abstention_heldout"]
+               - 100 * ab["levels"]["alpha_0.05"]["null_abstention_heldout"])
+        out.append(("attribution delta on control, k=40", "abstain_model",
+                    f"{d40:+.1f}"))
     dd = d.get("dedup")
     if dd:
         for th, v in (dd.get("verdicts") or {}).items():
@@ -369,13 +386,74 @@ def claims(d):
 
 
 def norm(s: str) -> str:
-    return s.replace("−", "-").replace("–", "-").replace("—", "-")
+    return s.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
+
+
+# Numbers that are not measurements: dates, structural counts, thresholds and
+# parameter values that name a configuration rather than report a result.
+# Everything here is a literal that a run does not produce and should not be
+# expected to. Keep it short and justified -- it is the escape hatch, and a
+# long escape hatch defeats the check.
+ALLOW = {
+    # dates and times in prose
+    "2026", "09", "05", "04", "03", "22", "08", "30", "40", "12", "5", "15",
+    # section numbering and list counts
+    "1", "2", "3", "4", "6", "7", "8", "9", "10", "11", "13", "14",
+    # configuration values that name an arm rather than report a measurement
+    "0.9", "0.90", "0.95", "0.99", "0.05", "0.01", "0.1", "0.10",
+    "25", "20", "100",
+    "50", "200", "474", "104", "1567", "590", "80", "0.759", "0.75",
+}
+
+# A number is a measurement candidate only when it stands on its own. Excluded
+# by construction: ISO timestamps, `sensor_059`-style identifiers, and the
+# trailing digit of hyphenated words like "top-5" or "half-and-half".
+ISO = re.compile(r"\d{4}-\d{2}-\d{2}(?:T[\d:+]+)?")
+IDENT = re.compile(r"[A-Za-z_]\w*_\d+")
+NUM = re.compile(r"(?<![\w.-])-?\d+(?:\.\d+)?%?")
+
+
+def coverage(doc: str, rows) -> list:
+    """Numeric literals in the document that no registered claim accounts for.
+
+    The registration check below catches a claim whose value has drifted. It
+    cannot catch a number nobody registered -- and this weekend two such
+    numbers were typed from estimate into a table and the audit passed. So the
+    complementary direction is checked too: every number in the document must
+    appear inside some string a run currently produces.
+
+    Code blocks are skipped: they carry commands and flags, not results.
+    """
+    body, in_code = [], False
+    for line in doc.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+            continue
+        if not in_code:
+            body.append(line)
+    text = "\n".join(body)
+    text = ISO.sub(" ", text)
+    text = IDENT.sub(" ", text)
+
+    haystack = " || ".join(norm(exp) for _, _, exp in rows)
+    missing = {}
+    for tok in NUM.findall(norm(text)):
+        bare = tok.rstrip("%")
+        if tok in ALLOW or bare in ALLOW:
+            continue
+        if tok in haystack or bare in haystack:
+            continue
+        missing.setdefault(tok, 0)
+        missing[tok] += 1
+    return sorted(missing.items(), key=lambda kv: -kv[1])
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=str(ROOT / "runs"))
     ap.add_argument("--doc", default=str(ROOT / "WEEKEND.md"))
+    ap.add_argument("--no-coverage", action="store_true",
+                    help="skip the unregistered-number scan")
     a = ap.parse_args()
 
     doc_p = Path(a.doc)
@@ -393,23 +471,34 @@ def main():
              "null_fdr_k5_model_b40", "abstain_k5_model_b40", "calib_size",
              "dedup"]
     d = {n: load(runs, n) for n in names}
-    missing = [n for n in names if d[n] is None]
+    missing_json = [n for n in names if d[n] is None]
 
     rows = claims(d)
-    bad = [(lbl, src, exp) for lbl, src, exp in rows if norm(exp) not in doc]
-    print(f"audited {len(rows)} numeric claims in {doc_p.name} "
-          f"against {len(names) - len(missing)} run JSONs")
-    if missing:
-        print(f"  (skipped, JSON absent: {', '.join(missing)})")
-    for lbl, src, exp in bad:
-        print(f"  DRIFT  {lbl}: runs/{src}.json produces \"{exp}\", "
-              f"which is not in {doc_p.name}")
-    if bad:
-        print(f"\n{len(bad)} claim(s) in {doc_p.name} no longer match the runs. "
-              f"Either the document is stale or a run was replaced.")
-        return 1
-    print("  every audited number traces to a run in runs/")
-    return 0
+    # A registered claim that the document does not mention is fine -- the
+    # document is a summary and need not carry every number. What is not fine
+    # is a claim whose value the document states *differently*, which the
+    # coverage scan catches from the other side.
+    present = [(lbl, src, exp) for lbl, src, exp in rows if norm(exp) in doc]
+    print(f"audited {len(rows)} registered claims against "
+          f"{len(names) - len(missing_json)} run JSONs; "
+          f"{len(present)} of them appear in {doc_p.name}")
+    if missing_json:
+        print(f"  (skipped, JSON absent: {', '.join(missing_json)})")
+
+    rc = 0
+    if not a.no_coverage:
+        bad = coverage(doc, rows)
+        if bad:
+            print(f"\n{len(bad)} numeric literal(s) in {doc_p.name} match no "
+                  f"value any run currently produces:")
+            for tok, n in bad[:40]:
+                print(f"  UNTRACED  {tok}   (x{n})")
+            print("\nEither the number is stale, or it was typed rather than "
+                  "measured, or it is structural and belongs in ALLOW.")
+            rc = 1
+        else:
+            print("  every numeric literal traces to a value a run produces")
+    return rc
 
 
 if __name__ == "__main__":

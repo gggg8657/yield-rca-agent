@@ -1358,7 +1358,7 @@ H6's second leg landed: `null_fdr.py --attribution model` at the pre-registered
 
 **H6 does not replicate at this depth — it inverts.** Control goes 91.6% to
 88.0%, a 3.6-point regression, where at `select_k = 5` the identical change was
-a 2.2-point gain. I had written before the run that it might not generalise,
+a 2.1-point gain. I had written before the run that it might not generalise,
 because two mechanism claims had already failed between exactly these two
 depths. That was the right prior and it is now three for three.
 
@@ -1742,7 +1742,7 @@ at `max_select` = 25 predicts +0.0145 against the +0.0116 observed. Sparsity
 alone accounts for the effect.
 
 So the attribution statistic buys **nothing** on accuracy. It is worth 13 points
-of selection stability, 2.2 points of error control at a suitable depth, and
+of selection stability, 2.1 points of error control at a suitable depth, and
 zero AUC.
 
 ### Which of my own two statements was right, and why the wrong one was wrong
@@ -2104,3 +2104,111 @@ removed from a five-item list is a small thing to have bought with a screen, a
 correlation matrix and a bootstrap verification loop — a univariate ranker plus
 a one-line correlation filter would plainly get the same result, and nothing
 here has tested that cheaper alternative.
+
+---
+
+## Turn 15 (2026-09-05) — H11, written before the run
+
+H10 could only measure the *ranking* (each arm's top-5), because the records
+stored `stability_values` without sensor identities and so the tau-thresholded
+report was not reconstructible. Both scripts now record `support_by_sensor` --
+per-sensor bootstrap support in original index space -- which makes the report
+itself reconstructible after the fact. That is the enabling change; H11 is what
+it enables.
+
+The live question is whether the loop's shorter report is a real loss. At
+matched depth and `n_boot` the loop reports **1.55** suspects at 94.2% control
+against the univariate ranker's **2.06** at 94.3%. H10 showed the univariate
+ranker's *top-5* always contains a near-duplicate pair (|r| >= 0.9) and the
+loop's never does. If that carries into the thresholded report, part of the
+0.51-suspect gap is duplicates rather than information.
+
+> **H11.** Measured on the tau-thresholded reported sets rather than the top-5,
+> the gap between the two arms is **materially smaller in distinct correlation
+> families than in raw suspect count**. Concretely: the univariate arm's mean
+> reported *families* will exceed the loop's by **less than 0.40**, against the
+> 0.51 gap in raw count -- i.e. at least a fifth of its lead is near-duplicates
+> of sensors it has already named.
+
+**What distinguishes H11 from the obvious alternative.** The alternative is that
+the duplication H10 found in the top-5 does not survive thresholding, because
+tau cuts the list to one or two sensors and a duplicate pair rarely both clear
+it. Then the family gap equals the count gap (~0.51) and the loop's shorter
+report is a straight loss of coverage. That is a live possibility and I think it
+is close to even: the reported sets average under two sensors, and two sensors
+can only be duplicates of each other.
+
+**The bar, set now.** H11 holds only if the family gap is below 0.40 *and* the
+count gap on the same replicates reproduces near 0.51. If the count gap itself
+moves, the comparison is not the one I described and the result is void rather
+than favourable.
+
+**Registered against myself, again.** H10 came out favourable to the
+architecture only after I switched thresholds, and I have already noted that
+choosing 0.90 was defensible but post hoc. H11 is measured at **both** 0.90 and
+0.99, both reported, and the 0.90 row is the one this hypothesis is about --
+declared here, before the run, rather than after seeing which one helps.
+
+**Runs:** re-run the two arms with the new field, nothing else changed --
+`null_fdr.py --select-k 5 --attribution model --n-boot 40` (~50 min) and
+`null_fdr_rankers.py --variants` for the univariate ladder. Then
+`scripts/dedup.py` gains a report-level mode that thresholds each replicate's
+`support_by_sensor` at that arm's own tau and counts families among the
+survivors.
+
+---
+
+## Turn 15, second part — the audit changed shape, and immediately caught me again
+
+### The audit was registration-based; it is now coverage-based
+
+`audit_weekend.py` checked that every *registered* claim appears in
+`WEEKEND.md`. I noted its weakness two turns ago — "a registration-based audit
+cannot tell you about the number you forgot to register" — after typing two
+numbers from estimate into a table that the audit passed.
+
+It now checks the other direction as well, which is the direction that matters:
+**every numeric literal in `WEEKEND.md` must appear inside some string a run
+currently produces**, or be in a short, justified `ALLOW` list of structural
+values (dates, α levels, configuration constants). Code blocks are skipped, ISO
+timestamps and `sensor_059`-style identifiers are stripped before tokenising, and
+a number preceded by a word character is not a candidate — otherwise "top-5"
+reads as the number −5.
+
+This subsumes the old drift check: a stale number in the document no longer
+matches any current claim string, so it surfaces as untraced. It also means the
+registered-claim list no longer has to be exhaustive for the document to be
+safe, which is what made compressing the document possible at all.
+
+**It caught an error in its first run against the compressed file.** I have been
+writing "+2.2 points of error control" for four turns. The raw values give
+**+2.1437**, i.e. +2.1. The 2.2 came from subtracting the rounded displays
+(93.7 − 91.5) rather than the underlying numbers — the identical mistake that
+put "−1.2" and "14.6x" into this repository in Turn 10, which I had said at the
+time I would not repeat. Corrected in `WEEKEND.md`, `critique_log.md`,
+`paper_draft.md` and the generator, and the two attribution deltas are now
+registered claims computed from raw values, so the next occurrence fails CI
+rather than surviving four turns.
+
+That I made the same error again, having named it and added a guard against one
+instance of it, is the useful data point: naming a failure mode does not prevent
+it, and only the mechanical check does. The guard now covers the class rather
+than the instance.
+
+### WEEKEND.md was a thirty-minute read
+
+The brief asks for a file "a tired person can read in five minutes". It had
+grown to **781 lines and ~7,250 words** by appending one result section per
+turn — the exact accretion pattern the instruction exists to prevent — with the
+decisions section, which the brief says is the point, buried at line 683 behind
+fifteen long result narratives.
+
+Rewritten to **184 lines**: one-paragraph summary, headline table, **decisions
+first**, then one line per finding pointing into `RESULTS.md`, what did not
+work, and how to check the running job. Nothing is lost — every result narrative
+already exists in full in this log and in `RESULTS.md`, which is exactly the
+division of labour the brief specifies. The long version is not deleted from
+history; it is in the git log.
+
+I should have noticed this three turns ago. The signal was there every time I
+appended a section and the audit count went up.

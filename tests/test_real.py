@@ -323,3 +323,32 @@ if __name__ == "__main__":
         f()
         print(f"ok {n}")
     print(f"ok  ({len(fns)} tests)")
+
+
+def test_weekend_audit_catches_an_invented_number():
+    """The coverage scan must fail on a number no run produced.
+
+    `audit_weekend.py` used to check only that registered claims appear, which
+    cannot catch a number nobody registered -- and twice this weekend a typed
+    number passed it. The scan now runs the other direction, so this plants an
+    invented figure and asserts it is flagged, then checks a structural value
+    and a real measurement are not.
+    """
+    import audit_weekend as aw
+
+    rows = [("a real claim", "some_run", "0.729 [0.710, 0.748]"),
+            ("another", "some_run", "94.2%")]
+
+    bad = dict(aw.coverage("The loop scored 0.729 [0.710, 0.748] and "
+                           "0.888 on the second axis.", rows))
+    assert "0.888" in bad, "an invented number was not flagged"
+    assert "0.729" not in bad, "a registered number was wrongly flagged"
+
+    # Code blocks carry commands, not results, and must be skipped.
+    fenced = "```\nscripts/foo.py --n-boot 37\n```\n"
+    assert not aw.coverage(fenced, rows), "a flag inside a code block was flagged"
+
+    # "top-5" must not read as the number -5, and ISO dates must not tokenise.
+    prose = "The top-5 on 2026-09-05 for sensor_059 reached 94.2%."
+    assert not aw.coverage(prose, rows), (
+        f"tokeniser artefacts leaked through: {aw.coverage(prose, rows)}")
