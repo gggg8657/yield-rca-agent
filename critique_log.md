@@ -1772,3 +1772,51 @@ ranking component at all.
 
 `n_boot` = 12 and `max_select` are now the two parameters this repository can
 show govern its headline metrics, and neither was ever tuned or discussed.
+
+---
+
+## Turn 12, fourth part — H9, written before the run
+
+The grid finding makes a prediction, which is the test of whether it is worth
+anything. Error control is a step function on {1 - P(M >= k/`n_boot`)}, so
+`n_boot` sets the resolution. At `n_boot` = 12 the closest attainable value to
+0.95 for the best arm (`select_k` = 5, model attribution) is **0.935**.
+
+> **H9.** Raising `n_boot` from 12 to 40, changing nothing else, refines the
+> attainable set enough to bring a value within **0.01 of 0.95**, and the
+> measured held-out control at alpha = 0.05 lands closer to nominal than the
+> current 93.7%.
+
+**What distinguishes H9 from the obvious alternative, and why I think it is
+close to even money.** Two effects run in opposite directions and the repo has
+measured neither:
+
+1. *Spacing.* The grid goes from steps of 1/12 to 1/40, so more values become
+   attainable. This helps.
+2. *Saturation.* P(M = 1) may **rise**. A sensor selected in 12 of 12 resamples
+   is a weaker claim than one selected in 40 of 40, but it is not obvious which
+   way the mass moves: more resamples give a noisy sensor more chances to miss,
+   which lowers P(M = 1), while the extra resamples also average out the noise
+   that was making it miss, which raises it. If saturation rises, the top of
+   the attainable set drops and the finer spacing buys nothing.
+
+If (1) dominates, control moves toward 0.95 and H9 holds. If (2) dominates,
+control gets *worse* despite the finer grid, and the practical advice inverts:
+fewer bootstrap resamples, not more. Either outcome is publishable and the
+second is more interesting, since "raise `n_boot`" is what anyone would guess.
+
+**A third possibility I am registering now so it is not a post-hoc save:** the
+grid may refine while the *calibration* fails to exploit it, because tau is
+fitted on 100 null replicates per half-split and a finer grid needs more
+replicates to resolve. If the attainable set contains a value near 0.95 but the
+measured control does not move toward it, that is the diagnosis, and the check
+is whether `tau_min` and `tau_max` spread further apart across splits than they
+do at `n_boot` = 12.
+
+**Run:** `scripts/null_fdr.py --null 200 --real 40 --jobs 16 --base rf
+--select-k 5 --attribution model --n-boot 40`, priced by the same
+`scripts/abstain.py` split-half calibration →
+`runs/null_fdr_k5_model_b40.json`, `runs/abstain_k5_model_b40.json`. About 3.3x
+the bootstrap work of the `n_boot` = 12 arm, so roughly an hour. The
+`--n-boot` flag is a two-line addition of the same shape as `--select-k` and
+`--attribution`; nothing already measured is recomputed.

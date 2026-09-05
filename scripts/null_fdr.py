@@ -138,6 +138,13 @@ def main():
                          "stability by 13 points, and depth (H4) did not move "
                          "error control at all, so this asks whether the "
                          "estimator is what limits error control too.")
+    ap.add_argument("--n-boot", type=int, default=None,
+                    help="override the VerifierAgent's resample count. H9: "
+                         "the null max-statistic lives on multiples of "
+                         "1/n_boot, so n_boot sets the resolution of the "
+                         "attainable error-control set. Raising it refines "
+                         "the grid; whether that helps depends on whether "
+                         "P(max = 1) rises at the same time.")
     ap.add_argument("--out", default="runs/null_fdr.json")
     a = ap.parse_args()
 
@@ -147,6 +154,8 @@ def main():
         over["select_k"] = a.select_k
     if a.attribution is not None:
         over["attribution"] = a.attribution
+    if a.n_boot is not None:
+        over["n_boot"] = a.n_boot
     jobs = [(True, r) for r in range(a.null)] + [(False, r) for r in range(a.real)]
     if over:
         base_cfg = {k: AGENT_CFG[k] for k in over}
