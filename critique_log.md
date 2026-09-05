@@ -1982,3 +1982,125 @@ that compares a document to an artifact cannot catch a change that moves both.
 The three failure modes this weekend that no guardrail caught — the wrong
 comparison, the unregistered number, and now the order-dependent resample —
 share that shape.
+
+---
+
+## Turn 14, second part — H10, written before the run
+
+Three parameters have now been tuned in the loop's favour and it is level with a
+univariate ranker on error control (94.2% against 94.3%) while still reporting
+fewer suspects (1.55 against 2.06). Every turn this weekend has read that gap as
+a deficit. It is worth asking whether it is one.
+
+The loop contains a `CorrelatorAgent` whose entire job is to collapse
+near-identical sensors to one representative, and SECOM is a dataset where 179
+sensors have a partner correlated above 0.99. A shorter list from a
+deduplicating ranker is not obviously worse than a longer list from one that
+does not deduplicate — it may be the same information with the duplicates
+removed. This repository has never checked, and has been scoring report length
+as though longer were better.
+
+> **H10.** The loop's shorter suspect list is deduplication, not
+> under-reporting. Measured at **matched list length** — both arms' stored
+> real-label `top5` — the loop's five sensors will span **more distinct
+> correlation families** (|r| >= 0.99 clusters, the map already used for the
+> cluster-aware stability column) than the univariate ranker's five.
+
+**What distinguishes H10 from the obvious alternative.** The alternative is that
+the loop simply names fewer distinct things: its five span the same number of
+families as univariate's five, or fewer, and the shorter tau-reported list is a
+real loss of coverage. Under H10 the loop's advantage should be visible at
+matched length, which is why the comparison uses `top5` rather than the
+tau-thresholded sets — those differ in length, and comparing family counts
+between lists of different lengths would confound the two things I am trying to
+separate.
+
+**What this can and cannot settle, stated now.** It cannot tell me the
+tau-reported lists span different family counts, because the records store
+`stability_values` without the sensor identities that cleared tau, so the
+reported set is not reconstructible from what is on disk. The `top5` comparison
+is a statement about the *ranking*, not about the report, and I will describe it
+that way. If H10 holds I will note that the natural follow-up — recording
+reported sensor identities and repeating this on the tau-thresholded sets —
+needs a re-run that has not happened.
+
+**Registered against myself:** I have found against this architecture on every
+axis for four turns. H10 is the first test designed to give it a fair chance at
+a defence, and I should be alert to grading it generously. So the bar is
+pre-set: H10 holds only if the loop's mean distinct-family count over its 25
+real-label replicates exceeds the univariate arm's by more than the standard
+error of the difference. A tie is not a win for the architecture.
+
+**Analysis, zero compute:** `scripts/report.py` reads the stored `top5` sets
+from `runs/null_fdr_k5_model_b40.json` (loop) and `runs/null_fdr_rankers.json`
+(univariate variants) and maps them through `yieldrca.stability.cluster_map` at
+the same 0.99 threshold the stability table uses. No model is fitted.
+
+---
+
+## Turn 14, third part — H10: holds at the right threshold, refuted at the one I registered
+
+`scripts/dedup.py`, zero compute, reads the stored real-label `top5` sets and
+maps them through the correlation-cluster map.
+
+| family threshold | families | loop top-5 | univariate top-5 | H10 |
+|---|---|---|---|---|
+| 0.90 — the loop's own `corr_thresh` | 372 | **5.000** | 4.000 | holds |
+| 0.95 | 398 | **5.000** | 4.000 | holds |
+| 0.99 — **pre-registered** | 486 | 5.000 | 5.000 | refuted |
+
+**At the loop's own grouping threshold, H10 holds deterministically.** The
+loop's top-5 spans five distinct families in *every* replicate; the univariate
+ranker's spans four in every one of its own. It names a near-duplicate pair
+every single time and the loop never does. Both counts are constant across
+replicates, so the standard-error bar I pre-registered is degenerate — the
+honest statement is the replicate count, not a p-value, and I have said so in
+`RESULTS.md` rather than quoting an SE of 0.000 as though it were a strong test.
+
+**At the pre-registered threshold it is refuted**, because at |r| >= 0.99 nobody
+names a duplicate pair and there is nothing to deduplicate.
+
+### The pre-registration was wrong, and that is the part worth recording
+
+I registered H10 against the 0.99 map "already used for the cluster-aware
+stability column". The loop's `CorrelatorAgent` groups at `corr_thresh = 0.90`.
+So I pre-registered a test of whether the component enforces a rule **stricter
+than the one it implements** — and the answer to that is uninformative either
+way.
+
+This is an awkward position to be in, because the threshold that vindicates the
+architecture is the one I switched to after seeing the first result. I have
+handled it the only way that seems defensible: both rows are in the table, the
+pre-registered one is labelled as pre-registered, the argument for why 0.90 is
+the fair test is stated *as an argument* rather than assumed, and the reader can
+disagree and take the 0.99 row instead. What I have not done is quietly
+re-register.
+
+The general failure is one I can name now: **pre-registering a criterion without
+checking it against the implementation of the thing being tested.** I chose 0.99
+because it was the threshold already in the repo, not because it was the
+threshold the claim was about. Convenience is not a reason.
+
+### What this actually establishes, kept small
+
+It is the **first measured defence of a loop component this weekend**, and I
+want to state it without inflating it, because I have spent four turns finding
+against this architecture and the temptation to over-credit a win is exactly
+symmetric to the temptation to over-credit a loss.
+
+The correlation grouping does what it advertises: at its own threshold it
+removes a duplicate pair that a univariate ranker leaves in, in 40 of 40
+replicates. That is real and it is measured.
+
+It does **not** show the loop's shorter report is as informative. The
+tau-thresholded reported sets are not reconstructible from disk — the records
+store `stability_values` without sensor identities — so this measures the
+*ranking*, not the *report*, and I have said so in the artifact. Closing that
+gap needs `null_fdr.py` to record reported identities and a re-run.
+
+And it does not show the deduplication earns its cost. The same component was
+worth +0.2 points of top-5 stability in the ablation ladder. One duplicate pair
+removed from a five-item list is a small thing to have bought with a screen, a
+correlation matrix and a bootstrap verification loop — a univariate ranker plus
+a one-line correlation filter would plainly get the same result, and nothing
+here has tested that cheaper alternative.

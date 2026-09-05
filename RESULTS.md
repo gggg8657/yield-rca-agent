@@ -503,6 +503,26 @@ And how fast the calibration term shrinks, for the arm H9 produced (agent loop, 
 
 The loss roughly halves from 25 to 50 replicates and again to 100, then stops. At 200 null replicates -- what these runs use -- the split-half protocol fits tau on 100, which is where the curve flattens, so **the remaining gap to nominal is not something more null replicates would close cheaply.** That is a more useful statement than the raw shortfall, and it is only visible once the two terms are separated.
 
+### Is the shorter suspect list deduplication? (H10)
+
+Every comparison so far has scored report length as though longer were better: the loop names 1.55 suspects at 94.2% control against a univariate ranker's 2.06 at 94.3%. But the loop runs a `CorrelatorAgent` whose job is to collapse near-identical sensors, and 179 SECOM sensors have a partner correlated above 0.99. A shorter list from a deduplicating ranker may be the same information with the duplicates removed.
+
+Measured at **matched list length** -- every arm's stored real-label `top5` -- so this is a statement about the ranking, not about report length. No model is fitted; it reads sets already on disk.
+
+| family threshold | families in the matrix | loop, distinct families in top-5 | univariate, same | difference | H10 |
+|---|---|---|---|---|---|
+| 0.90 (the loop's own `corr_thresh`) | 372 | 5.000 | 4.000 | +1.000 | **holds** |
+| 0.95 | 398 | 5.000 | 4.000 | +1.000 | **holds** |
+| 0.99 (**pre-registered**) | 486 | 5.000 | 5.000 | +0.000 | refuted |
+
+**At the loop's own grouping threshold the answer is yes, deterministically.** The loop's top-5 spans five distinct families in every one of its 40 real-label replicates; the univariate ranker's spans four in every one of its own -- it names a near-duplicate pair every single time, and the loop never does. Both counts are constant across replicates, so the pre-registered standard-error bar is degenerate and the honest statement is the replicate count rather than a p-value.
+
+**And at the pre-registered threshold it is refuted**, because at |r| >= 0.99 no arm ever names a duplicate pair -- there is nothing to deduplicate. That is the same thing the stability table's raw and cluster-aware columns say by barely differing, now exactly rather than approximately.
+
+*The pre-registration was wrong and is not being quietly swapped.* H10 was registered against the 0.99 map because that is the one the stability column uses. The loop groups at 0.90. Testing a deduplication claim at a threshold stricter than the rule being tested asks whether the component enforces something it never claimed to, and the answer to that question is uninformative. The 0.90 row is the fair test and the 0.99 row is the one I said I would run.
+
+**What this does and does not license.** It is the first measured defence of a loop component in this repository: the correlation grouping does exactly what it advertises. It does *not* show the shorter report is as informative -- the tau-thresholded sets are not reconstructible from disk, since the records store support values without sensor identities, so this measures the ranking rather than the report. Nor does it show the deduplication is worth its cost: the same component was worth +0.2 points of top-5 stability in the ablation ladder, and one duplicate pair removed from a five-item list is a small thing to buy with a screen, a correlation matrix and a verification loop.
+
 ## What error control is achievable at all
 
 A suspect's bootstrap support is a count over `n_boot` resamples divided by `n_boot`, so the null max-statistic *M* lives on the grid {0, 1/`n_boot`, ..., 1}. Error control as a function of the threshold is therefore a **step function**, and only `n_boot` + 1 values of it are attainable no matter how alpha is chosen:

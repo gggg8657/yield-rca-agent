@@ -318,6 +318,18 @@ def claims(d):
                 (f"calibration loss: {lab}", "calib_size",
                  f"{m100.get('calibration_loss', float('nan')):+.3f}"),
             ]
+    dd = d.get("dedup")
+    if dd:
+        for th, v in (dd.get("verdicts") or {}).items():
+            out += [
+                (f"dedup loop families @{th}", "dedup",
+                 f"{v['loop_families']:.3f}"),
+                (f"dedup univariate families @{th}", "dedup",
+                 f"{v['univariate_families']:.3f}"),
+            ]
+        for th, v in (dd.get("by_threshold") or {}).items():
+            out.append((f"dedup n_families @{th}", "dedup",
+                        str(v["n_families"])))
     sp = d.get("sparsity")
     if sp:
         for k in sp["caps"]:
@@ -378,7 +390,8 @@ def main():
              "null_fdr_k5_model", "abstain_k5_model",
              "null_fdr_model", "abstain_model",
              "attr_arm", "par_few", "sparsity",
-             "null_fdr_k5_model_b40", "abstain_k5_model_b40", "calib_size"]
+             "null_fdr_k5_model_b40", "abstain_k5_model_b40", "calib_size",
+             "dedup"]
     d = {n: load(runs, n) for n in names}
     missing = [n for n in names if d[n] is None]
 

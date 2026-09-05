@@ -53,7 +53,7 @@ not met on any protocol.**
 
 ---
 
-## The fourteen new results
+## The fifteen new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -586,6 +586,48 @@ Cross-checked: `m = 100` on a 200-replicate arm *is* `abstain.py`'s protocol, an
 those rows reproduce the published control to within 0.003 across six arms.
 Asserted in a test, not eyeballed.
 
+### 15. The first measured defence of a loop component (H10, partly)
+
+Every comparison so far scored report length as though longer were better: the
+loop names 1.55 suspects at 94.2% control against a univariate ranker's 2.06 at
+94.3%. But the loop runs a `CorrelatorAgent` to collapse near-identical sensors.
+Is the shorter list deduplication rather than under-reporting?
+
+Measured at **matched list length** — every arm's stored real-label `top5` —
+zero compute, reading sets already on disk.
+
+| family threshold | families in the matrix | loop top-5 | univariate top-5 | H10 |
+|---|---|---|---|---|
+| 0.90 — *the loop's own `corr_thresh`* | 372 | **5.000** | 4.000 | holds |
+| 0.95 | 398 | **5.000** | 4.000 | holds |
+| 0.99 — **pre-registered** | 486 | 5.000 | 5.000 | refuted |
+
+**At the loop's own threshold, deterministically yes.** Its top-5 spans five
+distinct families in *every* replicate; the univariate ranker's spans four in
+every one of its own — it names a near-duplicate pair every single time and the
+loop never does. Both counts are constant, so the standard-error bar I
+pre-registered is degenerate; the honest statement is the replicate count.
+
+**I pre-registered the wrong threshold, and am not quietly swapping it.** H10
+was registered at 0.99 because that map was already in the repo. The loop groups
+at **0.90**. So I pre-registered a test of whether the component enforces a rule
+*stricter than the one it implements*, which is uninformative either way. Both
+rows are in the table, the pre-registered one is labelled, and the argument for
+0.90 being the fair test is stated as an argument you can reject.
+
+**Kept small on purpose.** This is the first measured defence of a loop
+component all weekend, and I have spent four turns finding against this
+architecture — the temptation to over-credit a win is exactly symmetric to the
+temptation to over-credit a loss. It shows the grouping does what it advertises.
+It does **not** show the shorter report is as informative: the τ-thresholded
+sets are not reconstructible from disk (records store support values without
+sensor identities), so this measures the *ranking*, not the *report*. And it
+does not show the component earns its cost — the same step was worth +0.2 points
+of top-5 stability, and one duplicate pair removed from a five-item list is a
+small thing to buy with a screen, a correlation matrix and a verification loop.
+A univariate ranker plus a one-line correlation filter would plainly do the
+same, and nothing here has tested that cheaper alternative.
+
 ---
 
 ## What I tried that did not work, and what it rules out
@@ -716,8 +758,16 @@ scripts/jobs.sh          # one line per job; flags a dead one as STALE
 ```
 
 **Nothing is running.** H9 finished at 04:08 (50 min). `git status` clean,
-`scripts/report.py --check` in sync, `scripts/audit_weekend.py` traces 121
-numeric claims here to 18 run JSONs, 48 tests pass.
+`scripts/report.py --check` in sync, `scripts/audit_weekend.py` traces 130
+numeric claims here to 19 run JSONs, 48 tests pass.
+
+The one experiment the last result demands, written down but not run: H10
+measured the *ranking* because the τ-thresholded reported sets cannot be
+rebuilt from disk — `null_fdr.py` records `stability_values` without the sensor
+identities that cleared τ. Adding `reported_original_` to its per-replicate
+record is a one-line change, and a re-run would let the deduplication question
+be asked of the reports themselves rather than of the top-5. About 50 minutes at
+`n_boot` = 40.
 
 A caution carried forward from Friday night: I lost ~5 hours to a launch that
 died silently, because the tail of its log read exactly like a healthy

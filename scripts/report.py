@@ -2043,6 +2043,93 @@ def sec_sparsity(sp):
     return body
 
 
+def sec_dedup(dd):
+    """H10: is the loop's shorter list deduplication, or under-reporting?
+
+    Reported with the pre-registration error on the face of it. H10 was
+    registered against the 0.99 cluster map the stability column uses, and at
+    that threshold it is refuted. But the loop's ``CorrelatorAgent`` groups at
+    ``corr_thresh = 0.90``, so 0.99 tests a rule the architecture never claimed
+    to enforce -- the pre-registered criterion was the wrong one, and both are
+    shown rather than the favourable one being quietly substituted.
+    """
+    if not dd:
+        return []
+    bt, vd = dd.get("by_threshold") or {}, dd.get("verdicts") or {}
+    if not bt:
+        return []
+    pre = str(dd.get("preregistered_threshold", 0.99))
+    own = str(dd.get("loop_corr_thresh", 0.9))
+    rows = []
+    for th in sorted(bt, key=float):
+        v = vd.get(th)
+        if not v:
+            continue
+        tag = []
+        if th == own:
+            tag.append("the loop's own `corr_thresh`")
+        if th == pre:
+            tag.append("**pre-registered**")
+        rows.append([f"{float(th):.2f}" + (f" ({', '.join(tag)})" if tag else ""),
+                     str(bt[th]["n_families"]),
+                     f"{v['loop_families']:.3f}",
+                     f"{v['univariate_families']:.3f}",
+                     f"{v['difference']:+.3f}",
+                     "**holds**" if v["holds"] else "refuted"])
+    if not rows:
+        return []
+    n_rep = next(iter(bt[pre]["arms"].values()))["n_replicates"] \
+        if pre in bt else 0
+    return [
+        "### Is the shorter suspect list deduplication? (H10)", "",
+        "Every comparison so far has scored report length as though longer "
+        "were better: the loop names 1.55 suspects at 94.2% control against a "
+        "univariate ranker's 2.06 at 94.3%. But the loop runs a "
+        "`CorrelatorAgent` whose job is to collapse near-identical sensors, "
+        "and 179 SECOM sensors have a partner correlated above 0.99. A shorter "
+        "list from a deduplicating ranker may be the same information with the "
+        "duplicates removed.", "",
+        "Measured at **matched list length** -- every arm's stored real-label "
+        "`top5` -- so this is a statement about the ranking, not about report "
+        "length. No model is fitted; it reads sets already on disk.", "",
+        table(rows, ["family threshold", "families in the matrix",
+                     "loop, distinct families in top-5",
+                     "univariate, same", "difference", "H10"]), "",
+        f"**At the loop's own grouping threshold the answer is yes, "
+        f"deterministically.** The loop's top-5 spans five distinct families in "
+        f"every one of its {n_rep} real-label replicates; the univariate "
+        f"ranker's spans four in every one of its own -- it names a "
+        f"near-duplicate pair every single time, and the loop never does. Both "
+        f"counts are constant across replicates, so the pre-registered "
+        f"standard-error bar is degenerate and the honest statement is the "
+        f"replicate count rather than a p-value.", "",
+        f"**And at the pre-registered threshold it is refuted**, because at "
+        f"|r| >= {float(pre):.2f} no arm ever names a duplicate pair -- there "
+        f"is nothing to deduplicate. That is the same thing the stability "
+        f"table's raw and cluster-aware columns say by barely differing, now "
+        f"exactly rather than approximately.", "",
+        "*The pre-registration was wrong and is not being quietly swapped.* "
+        f"H10 was registered against the {float(pre):.2f} map because that is "
+        f"the one the stability column uses. The loop groups at "
+        f"{float(own):.2f}. Testing a deduplication claim at a threshold "
+        f"stricter than the rule being tested asks whether the component "
+        f"enforces something it never claimed to, and the answer to that "
+        f"question is uninformative. The {float(own):.2f} row is the fair test "
+        f"and the {float(pre):.2f} row is the one I said I would run.", "",
+        "**What this does and does not license.** It is the first measured "
+        "defence of a loop component in this repository: the correlation "
+        "grouping does exactly what it advertises. It does *not* show the "
+        "shorter report is as informative -- the tau-thresholded sets are not "
+        "reconstructible from disk, since the records store support values "
+        "without sensor identities, so this measures the ranking rather than "
+        "the report. Nor does it show the deduplication is worth its cost: the "
+        "same component was worth +0.2 points of top-5 stability in the "
+        "ablation ladder, and one duplicate pair removed from a five-item list "
+        "is a small thing to buy with a screen, a correlation matrix and a "
+        "verification loop.", "",
+    ]
+
+
 def sec_calib_size(cs, nfm40=None, abm40=None, ab5m=None):
     """Split the gap to nominal into a grid term and a calibration term.
 
@@ -3121,6 +3208,7 @@ def build(runs: Path):
     aa = read_json(runs / "attr_arm.json")
     sp = read_json(runs / "sparsity.json")
     cs = read_json(runs / "calib_size.json")
+    dd = read_json(runs / "dedup.json")
     nfm40 = read_json(runs / "null_fdr_k5_model_b40.json")
     abm40 = read_json(runs / "abstain_k5_model_b40.json")
     ab5m = read_json(runs / "abstain_k5_model.json")
@@ -3145,6 +3233,7 @@ def build(runs: Path):
     L += sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk)
     L += sec_nboot_grid(rk)
     L += sec_calib_size(cs, nfm40, abm40, ab5m)
+    L += sec_dedup(dd)
     L += sec_saturation([
         ("agent, `select_k = 40`, permutation", nf, ab),
         ("agent, `select_k = 40`, **model**", nfm, abm),
