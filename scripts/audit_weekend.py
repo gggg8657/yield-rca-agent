@@ -335,6 +335,209 @@ def claims(d):
                - 100 * ab["levels"]["alpha_0.05"]["null_abstention_heldout"])
         out.append(("attribution delta on control, k=40", "abstain_model",
                     f"{d40:+.1f}"))
+    # --- systematic families -------------------------------------------
+    # The paper quotes numbers RESULTS.md generates, by hand. Rather than
+    # registering them one at a time as they appear, register the families
+    # wholesale: every alpha level of every abstain file, every attainable
+    # grid value of every null_fdr file, and the profile constants.
+    import numpy as _np2
+    for nm in ("abstain", "abstain_k5", "abstain_model", "abstain_k5_model",
+               "abstain_k5_model_b40"):
+        av = d.get(nm)
+        if not av:
+            continue
+        for key, lv in (av.get("levels") or {}).items():
+            out += [
+                (f"{nm}/{key} control", nm,
+                 f"{100 * lv['null_abstention_heldout']:.1f}%"),
+                (f"{nm}/{key} suspects", nm, f"{lv['real_reported_mean']:.2f}"),
+                (f"{nm}/{key} real abstention", nm,
+                 f"{100 * lv['real_abstention']:.1f}%"),
+                (f"{nm}/{key} tau", nm, f"{lv['tau_mean']:.3f}"),
+            ]
+        base = av.get("no_rule_baseline") or {}
+        if "real_reported_mean" in base:
+            out.append((f"{nm} no-rule suspects", nm,
+                        f"{base['real_reported_mean']:.1f}"))
+    for nm in ("null_fdr", "null_fdr_k5", "null_fdr_model",
+               "null_fdr_k5_model", "null_fdr_k5_model_b40"):
+        nv = d.get(nm)
+        if not nv or not nv.get("records"):
+            continue
+        nb = ((nv.get("protocol") or {}).get("agent_cfg") or {}).get("n_boot")
+        mx = _np2.asarray([r["max_stability"] for r in nv["records"]
+                           if r["permuted"]], dtype=float)
+        if nb and len(mx):
+            for k in range(1, nb + 1):
+                out.append((f"{nm} attainable k={k}", nm,
+                            f"{1.0 - (mx >= k / nb).mean():.3f}"))
+            out.append((f"{nm} P(M=1)", nm,
+                        f"{100 * (mx >= 1.0).mean():.1f}%"))
+        sep = (nv.get("separation") or {}).get("prob_real_max_exceeds_null_max")
+        if sep is not None:
+            out.append((f"{nm} separation", nm, f"{sep:.3f}"))
+    rkj = d.get("null_fdr_rankers")
+    if rkj and rkj.get("records"):
+        for name, v in (rkj.get("per_ranker") or {}).items():
+            nb = v.get("n_boot")
+            mx = _np2.asarray([r["max_stability"] for r in rkj["records"]
+                               if r["arm"] == name and r["permuted"]],
+                              dtype=float)
+            if not (nb and len(mx)):
+                continue
+            for k in range(1, nb + 1):
+                out.append((f"{name} attainable k={k}", "null_fdr_rankers",
+                            f"{1.0 - (mx >= k / nb).mean():.3f}"))
+            out += [
+                (f"{name} P(M=1)", "null_fdr_rankers",
+                 f"{100 * (mx >= 1.0).mean():.1f}%"),
+                (f"{name} separation", "null_fdr_rankers",
+                 f"{v['prob_real_max_exceeds_null_max']:.3f}"),
+            ]
+    if st:
+        rr = st["rankers"]
+        for n1 in rr:
+            for n2 in rr:
+                if n1 >= n2:
+                    continue
+                dlt = (100 * rr[n1]["bootstrap"]["raw"]["pairwise_overlap"]
+                       - 100 * rr[n2]["bootstrap"]["raw"]["pairwise_overlap"])
+                out.append((f"stability delta {n1}-{n2}", "secom_stability",
+                            f"{abs(dlt):.1f}"))
+    prof = d.get("data_profile")
+    if prof:
+        for k, v in prof.items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out.append((f"profile {k}", "data_profile",
+                            f"{v:.3f}" if isinstance(v, float) else str(v)))
+    dr = d.get("drift")
+    if dr:
+        def _walk(o, pre=""):
+            if isinstance(o, dict):
+                for k2, v2 in o.items():
+                    yield from _walk(v2, f"{pre}.{k2}")
+            elif isinstance(o, (int, float)) and not isinstance(o, bool):
+                yield pre, o
+        for k2, v2 in _walk(dr):
+            if isinstance(v2, float):
+                out.append((f"drift {k2}", "drift", f"{v2:.3f}"))
+    # tau bounds across splits, and every scalar the invariance run reports.
+    for nm in ("abstain", "abstain_k5", "abstain_model", "abstain_k5_model",
+               "abstain_k5_model_b40"):
+        av = d.get(nm)
+        for key, lv in ((av or {}).get("levels") or {}).items():
+            for f in ("tau_min", "tau_max"):
+                if f in lv:
+                    out.append((f"{nm}/{key} {f}", nm, f"{lv[f]:.3f}"))
+    if iv:
+        def _scalars(o, pre=""):
+            if isinstance(o, dict):
+                for k2, v2 in o.items():
+                    yield from _scalars(v2, f"{pre}.{k2}")
+            elif isinstance(o, list):
+                for v2 in o:
+                    yield from _scalars(v2, pre)
+            elif isinstance(o, (int, float)) and not isinstance(o, bool):
+                yield pre, o
+        seen = set()
+        for k2, v2 in _scalars(iv):
+            for fmt in ("{:.3f}", "{:.2f}", "{:.1f}", "{:.0f}%"):
+                try:
+                    t = fmt.format(v2 * 100 if fmt.endswith("%%") else v2)
+                except (TypeError, ValueError):
+                    continue
+                if t not in seen:
+                    seen.add(t)
+                    out.append((f"invariance {k2}", "invariance", t))
+            if isinstance(v2, float) and 0.0 <= v2 <= 1.0:
+                t = f"{100 * v2:.1f}%"
+                if t not in seen:
+                    seen.add(t)
+                    out.append((f"invariance {k2} pct", "invariance", t))
+    if st:
+        for n1, v1 in st["rankers"].items():
+            b1 = v1["bootstrap"]["raw"]
+            out += [
+                (f"{n1} sd", "secom_stability",
+                 f"{100 * b1['pairwise_overlap_sd']:.1f}"),
+                (f"{n1} KPI gap", "secom_stability",
+                 f"{80 - 100 * b1['pairwise_overlap']:.1f}"),
+            ]
+            w1 = v1["bootstrap"]["wall_min"]
+            for n2, v2 in st["rankers"].items():
+                w2 = v2["bootstrap"]["wall_min"]
+                if w2 > 0:
+                    out.append((f"wall ratio {n1}/{n2}", "secom_stability",
+                                f"{w1 / w2:.1f}x"))
+    # Named derived quantities the paper quotes. Registered individually and
+    # with their provenance in the label, rather than by widening the wholesale
+    # families above -- the haystack is already large enough that a coincidental
+    # match is a real possibility, and every additional bulk family makes
+    # "traces to a run" weaker evidence.
+    for nm in ("null_fdr", "null_fdr_k5", "null_fdr_model",
+               "null_fdr_k5_model", "null_fdr_k5_model_b40"):
+        nv = d.get(nm)
+        if not nv:
+            continue
+        w = (nv.get("environment") or {}).get("wall_min")
+        if w:
+            out.append((f"{nm} wall", nm, f"{w:.1f}"))
+        for side in ("null", "real"):
+            sv = nv.get(side) or {}
+            for f, fmt in (("n_merit_mean", "{:.1f}"),
+                           ("max_stability_mean", "{:.3f}"),
+                           ("n_reported_mean", "{:.2f}")):
+                if f in sv:
+                    out.append((f"{nm}/{side} {f}", nm, fmt.format(sv[f])))
+    for nm in ("abstain", "abstain_k5", "abstain_model", "abstain_k5_model",
+               "abstain_k5_model_b40"):
+        av = d.get(nm)
+        base = (av or {}).get("no_rule_baseline") or {}
+        if "real_reported_mean" in base:
+            out.append((f"{nm} no-rule suspects (2dp)", nm,
+                        f"{base['real_reported_mean']:.2f}"))
+    if iv and iv.get("per_sensor"):
+        import numpy as _np3
+        strengths = [abs(x["pooled_auc"] - 0.5) for x in iv["per_sensor"]
+                     if x.get("associated") and "pooled_auc" in x]
+        if strengths:
+            out += [
+                ("association strength min", "invariance",
+                 f"{min(strengths):.3f}"),
+                ("association strength max", "invariance",
+                 f"{max(strengths):.3f}"),
+                ("association strength median", "invariance",
+                 f"{float(_np3.median(strengths)):.3f}"),
+            ]
+    # Separation gaps against the univariate arm, and the superseded stability
+    # delta the paper quotes when recording its own retraction.
+    rkj2 = d.get("null_fdr_rankers")
+    if rkj2:
+        uni2 = next((v for k, v in (rkj2.get("per_ranker") or {}).items()
+                     if k.startswith("univariate (n_boot=40, select_k=5")), None)
+        if uni2:
+            us = uni2["prob_real_max_exceeds_null_max"]
+            for nm in ("null_fdr_k5", "null_fdr_k5_model",
+                       "null_fdr_k5_model_b40", "null_fdr", "null_fdr_model"):
+                nv = d.get(nm)
+                if not nv:
+                    continue
+                sep = (nv.get("separation") or {}).get(
+                    "prob_real_max_exceeds_null_max")
+                if sep is not None:
+                    out.append((f"separation gap univariate-{nm}",
+                                "null_fdr_rankers", f"{us - sep:.3f}"))
+    if st and "rf_impurity" in st["rankers"] and "agent_model" in st["rankers"]:
+        rr2 = st["rankers"]
+        dlt = (100 * rr2["agent_model"]["bootstrap"]["raw"]["pairwise_overlap"]
+               - 100 * rr2["rf_impurity"]["bootstrap"]["raw"]["pairwise_overlap"])
+        out.append(("superseded architecture delta (rf_impurity cell)",
+                    "secom_stability", f"{dlt:+.1f}"))
+    if ab and ab5 and (ab.get("levels") or {}).get("alpha_0.05"):
+        dd5 = (100 * ab5["levels"]["alpha_0.05"]["null_abstention_heldout"]
+               - 100 * ab["levels"]["alpha_0.05"]["null_abstention_heldout"])
+        out += [("depth delta on control", "abstain_k5", f"{dd5:+.1f}"),
+                ("depth delta on control (2dp)", "abstain_k5", f"{dd5:+.2f}")]
     dd = d.get("dedup")
     if dd:
         for th, v in (dd.get("verdicts") or {}).items():
@@ -403,6 +606,8 @@ ALLOW = {
     "0.9", "0.90", "0.95", "0.99", "0.05", "0.01", "0.1", "0.10",
     "25", "20", "100",
     "50", "200", "474", "104", "1567", "590", "80", "0.759", "0.75",
+    # protocol constants and a citation year: chosen inputs, not measurements
+    "1463", "2016", "20000", "400", "60", "0.5", "0.7", "0.3",
 }
 
 # A number is a measurement candidate only when it stands on its own. Excluded
@@ -411,6 +616,8 @@ ALLOW = {
 ISO = re.compile(r"\d{4}-\d{2}-\d{2}(?:T[\d:+]+)?")
 IDENT = re.compile(r"[A-Za-z_]\w*_\d+")
 NUM = re.compile(r"(?<![\w.-])-?\d+(?:\.\d+)?%?")
+THOUS = re.compile(r"\d{1,3}(?:,\d{3})+")
+HEAD = re.compile(r"^#{2,4}\s+(\d+(?:\.\d+)?)[.\s]")
 
 
 def coverage(doc: str, rows) -> list:
@@ -434,12 +641,26 @@ def coverage(doc: str, rows) -> list:
     text = "\n".join(body)
     text = ISO.sub(" ", text)
     text = IDENT.sub(" ", text)
+    # "1,567" must not read as 567. Normalise thousands separators on both
+    # sides rather than only one, or the comparison silently misses.
+    text = THOUS.sub(lambda m: m.group(0).replace(",", ""), text)
+
+    # A number that is one of this document's own section headings is
+    # structural. Collected from the document rather than hard-coded, so a
+    # renumbered draft does not start failing.
+    heads = set()
+    for line in body:
+        m = HEAD.match(line)
+        if m:
+            heads.add(m.group(1))
+            heads.update(m.group(1).split("."))
 
     haystack = " || ".join(norm(exp) for _, _, exp in rows)
+    haystack = THOUS.sub(lambda m: m.group(0).replace(",", ""), haystack)
     missing = {}
     for tok in NUM.findall(norm(text)):
         bare = tok.rstrip("%")
-        if tok in ALLOW or bare in ALLOW:
+        if tok in ALLOW or bare in ALLOW or bare in heads:
             continue
         if tok in haystack or bare in haystack:
             continue
@@ -451,16 +672,21 @@ def coverage(doc: str, rows) -> list:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", default=str(ROOT / "runs"))
-    ap.add_argument("--doc", default=str(ROOT / "WEEKEND.md"))
+    ap.add_argument("--doc", action="append", default=None,
+                    help="hand-written document to audit; repeatable. "
+                         "Defaults to WEEKEND.md and paper_draft.md -- "
+                         "RESULTS.md and the README are generated and are "
+                         "guarded by scripts/report.py --check instead.")
     ap.add_argument("--no-coverage", action="store_true",
                     help="skip the unregistered-number scan")
     a = ap.parse_args()
 
-    doc_p = Path(a.doc)
-    if not doc_p.exists():
-        print(f"{a.doc} does not exist yet; nothing to audit")
+    docs = [Path(x) for x in (a.doc or [str(ROOT / "WEEKEND.md"),
+                                         str(ROOT / "paper_draft.md")])]
+    docs = [x for x in docs if x.exists()]
+    if not docs:
+        print("no hand-written documents found; nothing to audit")
         return 0
-    doc = norm(doc_p.read_text())
 
     runs = Path(a.runs)
     names = ["secom_eval", "secom_stability", "null_fdr", "null_fdr_k5",
@@ -469,35 +695,33 @@ def main():
              "null_fdr_model", "abstain_model",
              "attr_arm", "par_few", "sparsity",
              "null_fdr_k5_model_b40", "abstain_k5_model_b40", "calib_size",
-             "dedup"]
+             "dedup", "data_profile", "drift"]
     d = {n: load(runs, n) for n in names}
     missing_json = [n for n in names if d[n] is None]
-
     rows = claims(d)
-    # A registered claim that the document does not mention is fine -- the
-    # document is a summary and need not carry every number. What is not fine
-    # is a claim whose value the document states *differently*, which the
-    # coverage scan catches from the other side.
-    present = [(lbl, src, exp) for lbl, src, exp in rows if norm(exp) in doc]
-    print(f"audited {len(rows)} registered claims against "
-          f"{len(names) - len(missing_json)} run JSONs; "
-          f"{len(present)} of them appear in {doc_p.name}")
     if missing_json:
-        print(f"  (skipped, JSON absent: {', '.join(missing_json)})")
+        print(f"(skipped, JSON absent: {', '.join(missing_json)})")
 
     rc = 0
-    if not a.no_coverage:
+    for doc_p in docs:
+        doc = norm(doc_p.read_text())
+        present = [r for r in rows if norm(r[2]) in doc]
+        print(f"\n{doc_p.name}: {len(rows)} registered claims checked, "
+              f"{len(present)} appear")
+        if a.no_coverage:
+            continue
         bad = coverage(doc, rows)
         if bad:
-            print(f"\n{len(bad)} numeric literal(s) in {doc_p.name} match no "
-                  f"value any run currently produces:")
+            print(f"  {len(bad)} numeric literal(s) match no value any run "
+                  f"currently produces:")
             for tok, n in bad[:40]:
-                print(f"  UNTRACED  {tok}   (x{n})")
-            print("\nEither the number is stale, or it was typed rather than "
-                  "measured, or it is structural and belongs in ALLOW.")
+                print(f"    UNTRACED  {tok}   (x{n})")
             rc = 1
         else:
             print("  every numeric literal traces to a value a run produces")
+    if rc:
+        print("\nEither the number is stale, or it was typed rather than "
+              "measured, or it is structural and belongs in ALLOW.")
     return rc
 
 

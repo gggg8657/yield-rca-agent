@@ -10,42 +10,67 @@ published paper appears except as an explicitly labelled published baseline.*
 ## Abstract (draft)
 
 Multi-agent pipelines for industrial root-cause analysis are typically evaluated
-on their prediction accuracy and on the plausibility of the causes they name. We
-argue both are the wrong test, and demonstrate a third on UCI SECOM. First, on
-this dataset a plain random forest over all sensors beats the full plan /
-attribute / verify / drop agent loop by a margin whose paired 95% interval
-excludes zero, so the agent architecture costs accuracy rather than buying it.
-Second, and more seriously, we show that the loop's advertised safeguard --
-suspects failing a bootstrap stability check are dropped -- has a
-false-discovery rate of 1.0 under a label-permutation null: across 200
-replicates of a dataset in which no sensor carries any information about
-failure, it named 2,743 root causes and abstained on none. The cause is not the
-never-return-empty-handed guard the code invites one to blame -- that fired on
-0.0% of replicates -- but a stability threshold set an order of magnitude below
-what noise clears. The underlying statistic is nonetheless informative
-(P(real > null) = 0.873), so we derive a null-calibrated abstention rule with
-family-wise control and price it under held-out calibration: at alpha = 0.05 the
-honest report is 0.60 suspects and empty 51% of the time, against the 20.9 the
-pipeline prints. Third, we ask whether anything simpler would have
-calibrated as well, and find that it does the whole job better: a univariate
-ranker at a selection depth where its support does not saturate separates the
-two worlds at 1.000, reaches 94.3% error control against the loop's 91.6%, and
-reports 2.06 suspects against 0.60 -- with no permutation-importance pass, no
-correlation grouping and no verification loop. Fourth, we ask whether the
-surviving suspects support a causal reading via an invariance screen across
-production periods. Exactly one of 22
-associated sensors is rejected -- and it is the one the loop ranks first in
-25 of 25 folds -- while the remaining 21 are not invariant but untestable, which
-we establish by attaching the screen's power curve: at 104 failed wafers it
-cannot see a break smaller than roughly 0.15 AUC, and the sensors' entire signal
-is smaller than that. The pipeline's output is therefore associational and we
-say so. Taken together the agent loop has no measured advantage over a
-univariate ranker on any axis we evaluate; it wins only on a synthetic generator
-where its premise -- that a few sensors dominate -- holds by construction, which
-localises the failure in the premise rather than the implementation. Finally we contrast all of this against a synthetic
-generator with known causes, where the same loop wins on both accuracy and
-stability -- locating the failure precisely in the premise that a few sensors
-dominate, rather than in the implementation.
+on prediction accuracy and on the plausibility of the causes they name. We argue
+both are the wrong test, and demonstrate a third on UCI SECOM.
+
+**The safeguard does not hold.** The pipeline's pitch is that suspects failing a
+bootstrap stability check are dropped. Under a label-permutation null, in which
+no sensor carries information about failure by construction, it named 2,743 root
+causes across 200 replicates and abstained on none: a false-discovery rate of
+1.0. The cause is not the never-return-empty-handed guard the code invites one
+to blame — that fired on 0.0% of replicates at the pre-registered operating
+point, and we show it provably cannot reach the calibrated report — but a
+stability threshold set an order of magnitude below what noise clears. The
+underlying statistic is nonetheless informative (P(real > null) = 0.873), so we
+derive a null-calibrated abstention rule with family-wise control and price it
+under held-out calibration: at alpha = 0.05 the honest report is 0.60 suspects
+and empty 51.3% of the time, against the 20.9 the pipeline prints.
+
+**Error control is quantised, and by a parameter nobody tunes.** The statistic
+being thresholded is a count over `n_boot` bootstrap resamples, so error control
+is a step function taking at most `n_boot` + 1 values. At the pre-registered
+`n_boot` = 12, nominal 95% control is not merely missed but *absent from the
+attainable set*; raising `n_boot` to 40 puts it there and the delivered figure
+follows. We separate the remaining shortfall into a grid term and a calibration
+term and show they are different budgets — more resamples versus more null
+replicates — which the literature on stability selection, and our own earlier
+drafts, conflate.
+
+**Tuning the architecture in its own favour does not rescue it.** We test three
+of its parameters, one at a time, each with the prediction registered before the
+run. Changing the attribution statistic from held-out permutation importance to
+model-native importance is worth +13.0 points of top-5 selection stability while
+the multi-agent machinery around that statistic is worth about two, inside one
+standard deviation. The same change helps error control at a narrow selection
+depth and *hurts* it at the pre-registered one, because a more repeatable
+statistic saturates the null max-statistic — the two parameters cannot be tuned
+independently. On accuracy it buys nothing at all: a sparsity-matched sweep shows
+the apparent gain was the extra sensors selected, and the pipeline's
+-0.042 [-0.058, -0.025] AUC deficit against a plain random forest is the price of
+selecting at all.
+
+**What survives comparison with the simplest baseline.** After all three
+parameters are tuned, the pipeline reaches 94.2% error control reporting 1.55
+suspects; a univariate ranker at the same depth and resample count reaches 94.3%
+reporting 2.06, with no permutation-importance pass, no correlation grouping and
+no verification loop. We report one measured advantage for the architecture, and
+only one: its correlation grouping means its top-5 never contains a
+near-duplicate pair (|r| >= 0.9) while the univariate ranker's always does, in
+every replicate of both. Whether that is worth the apparatus is not something we
+can show.
+
+**The suspects are associational and we say so.** An invariance screen across
+production periods rejects exactly one of the 22 associated sensors — and it is
+the one the pipeline ranks first in 25 of 25 folds — while the remaining 21 are
+not invariant but untestable, which we establish by attaching the screen's power
+curve rather than reporting a bare null result.
+
+Against a synthetic generator with known causes the same pipeline wins on both
+accuracy and stability, which locates the failure in its premise — that a few
+sensors dominate — rather than in its implementation. Every number here is
+regenerated from a run artefact by a script, and the paper records the
+hypotheses that were refuted, including three of our own mechanism claims that
+did not survive being measured at a second operating point.
 
 ---
 
@@ -425,7 +450,7 @@ this comparison quoted separation moving from 0.873 to 0.994, which would have
 been a mixed-protocol subtraction: 0.873 is the pipeline at `select_k = 40` and
 0.994 at `select_k = 5`. Within protocol the movement is 0.982 to 0.994, because
 depth alone had already moved separation by 11 points while moving error control
-by −0.1. Depth and statistic therefore act on these two columns almost
+by −0.05. Depth and statistic therefore act on these two columns almost
 orthogonally, and any claim about "the pipeline's confidence" has to name which
 column and which depth it refers to. Our reporting code now pairs arms by depth
 and cannot cross them.

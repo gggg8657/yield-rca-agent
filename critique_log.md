@@ -2212,3 +2212,70 @@ history; it is in the git log.
 
 I should have noticed this three turns ago. The signal was there every time I
 appended a section and the audit count went up.
+
+---
+
+## Turn 16 (2026-09-05) — the abstract was making the case I had already retracted, and the paper had never been audited
+
+H11 is running, so this turn went to the two hand-written documents.
+
+### The abstract compared a tuned baseline against an untuned loop
+
+`paper_draft.md`'s abstract still read: the univariate ranker "reaches 94.3%
+error control against the loop's **91.6%**". That 91.6% is the loop at its
+pre-registered operating point, before any of the three parameters I have since
+tuned in its favour. The loop now reaches **94.2%**.
+
+So the abstract was overstating the case against the architecture by exactly the
+asymmetry codex called out in Turn 7 — a tuned baseline against an untuned
+comparator — which I fixed in `RESULTS.md` at the time and never propagated to
+the paper. The gap it advertises is 2.7 points; the honest gap is 0.1.
+
+It was also stale in three other ways: it claimed "no measured advantage on any
+axis", which H10 has since contradicted; it omitted the grid/`n_boot` result and
+the sparsity refutation entirely; and it closed with two sentences saying the
+same thing about the synthetic contrast, one immediately after the other.
+
+Rewritten around what the work actually found, in five labelled movements: the
+safeguard fails; error control is quantised by a parameter nobody tunes; tuning
+three parameters in the architecture's favour does not rescue it; what survives
+comparison with the simplest baseline (including the one advantage that does);
+and the suspects are associational. Every figure in it was re-read from a JSON
+before being written, not copied from the previous draft.
+
+### `paper_draft.md` had never been audited, and it had an error
+
+`audit_weekend.py` only ever read `WEEKEND.md`. The brief says *no* number in
+*any* file unless a run produced it, and the paper is a hand-written document
+carrying several hundred figures. It now audits both.
+
+The first clean run flagged 65 literals. Most were tokenisation (section
+numbers like "5.4", "1,567" reading as 567) or measurement families the
+registry did not cover, and those are now handled structurally — section
+headings are collected from the document itself rather than hard-coded, so a
+renumbered draft does not start failing.
+
+**One was a real error.** The paper said depth moved error control "by −0.1"
+where the runs give **−0.0475**. Small, and in the direction that made my own
+argument marginally stronger. It had survived because no check had ever looked
+at that file.
+
+### A limitation of the audit I should state rather than let grow
+
+Closing the gap took the registry from 133 claims to **3,121**, because I
+registered families wholesale — every alpha level of every abstain file, every
+attainable grid value of every null-FDR file. That works, and every literal in
+both documents now traces. But a haystack of 3,121 strings makes "this number
+appears somewhere in the registry" weaker evidence than it was at 133: with
+enough registered values, a coincidental substring match becomes possible.
+
+I have handled the last nine by registering each individually with its
+provenance in the label, and I have written the concern into the script's
+comments so the next person widening a bulk family sees it. The honest statement
+is that the check now proves *absence of fabrication* less strongly than it
+proves *presence of a source*, and the way to strengthen it would be to bind
+each number to its claim by position rather than by set membership — which is a
+larger change than tonight warrants.
+
+What it did do is catch two real defects in one turn — the stale 91.6%
+comparison and the −0.1 — in documents that had been reviewed by eye repeatedly.
