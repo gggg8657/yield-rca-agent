@@ -1543,3 +1543,232 @@ found-and-fixed inconsistency read as a save, and this one moved nothing. What
 it did buy is that the equality is now true by construction and asserted by a
 test, so the next person to retune either side gets a failure instead of a
 stale docstring.
+
+---
+
+## Turn 12 (2026-09-04) — H8, written before the run, and evidence I already had and failed to use
+
+Nothing is running; everything queued last turn landed. So this turn opens with
+the ablation I registered in `WEEKEND.md` as the one the last result demands:
+**the sparsity-matched version of H7.**
+
+### The confound, restated
+
+`agent_model_rf` scores 0.729 against `agent_rf`'s 0.717, a paired
++0.0116 [-0.0006, +0.0237], p = 0.071. But it selects **25.0** sensors per fold
+against 19.8, and 25.0 is `max_select` exactly — it is pinned at its budget and
+would have taken more. Since selection costs AUC monotonically on this dataset,
+some unknown share of that +0.0116 is simply less sparsity. I wrote in
+`RESULTS.md` and `WEEKEND.md` that the number should therefore be read as an
+upper bound on what attribution buys.
+
+### Evidence already in the repository that I did not use when I wrote that
+
+Reading `runs/secom_loop_sweep.json` before designing the run — which I should
+have done before writing the caveat — the sweep contains a relevant dominance
+relation that needs no interpolation at all:
+
+| sweep arm | n_selected | AUC |
+|---|---|---|
+| `agent_wide_permutation` | 32.8 | 0.7364 |
+| `agent_operating_model` | **25.0** | **0.7397** |
+
+The model-native arm scores **higher on 8 fewer sensors**. If the attribution
+gain were purely a sparsity artifact, that ordering could not happen. So the
+existing evidence points the *other* way from my caveat — the effect looks like
+it survives sparsity adjustment.
+
+I should be plain that this is a case of my own hedge being less well supported
+than the claim it hedged. The caveat was correct that the H7 comparison is
+confounded; it was careless in implying the confound probably explains the
+effect, when a run already in `runs/` suggested it does not. Two reasons the
+sweep does not settle it, which is why the run below is still worth doing: it
+uses a 10-fold protocol rather than the 25-fold headline one, and its tags vary
+`select_k` and `stability_min` alongside `max_select`, so its arms differ in
+more than sparsity and attribution.
+
+### H8
+
+> **H8.** The attribution effect on AUC is not a sparsity artifact. Sweeping
+> `max_select` over {5, 10, 15, 20, 25, 40} for both attribution statistics
+> under the headline 25-fold protocol — everything else at the pre-registered
+> operating point — the model-native curve will lie **above** the permutation
+> curve at matched selected-set size, at **every rung where both arms are
+> pinned at the cap**, with the matched-*n* difference in the range
+> **+0.005 to +0.020** rather than collapsing into ±0.005 of zero.
+
+**What distinguishes H8 from the obvious alternative.** The alternative is the
+one my own caveat asserted: the +0.0116 is mostly the extra 5.2 sensors, so at
+matched *n* the curves coincide. It predicts matched-*n* differences scattered
+around zero and a sign pattern no better than chance across the ladder.
+
+**How it will be judged, decided now rather than after seeing it.** A single
+rung cannot resolve this: the paired CI half-width on this protocol is about
+0.012, wider than the gap between the two predictions. So the evidence is the
+**sign pattern across matched rungs**, reported as a count (as this repo did for
+the 5-of-5 depth comparison) and not as a pooled CI — the rungs share folds and
+nest, so pooling them would manufacture precision I have not earned. Individual
+per-rung paired CIs go in the table and most of them will straddle zero; that is
+expected and is not a result either way.
+
+**Second thing this buys, which may matter more than H8 itself.** The ladder
+measures dAUC/d(n_selected) for each statistic *under the headline protocol*.
+The "-0.030 of irreducible sparsity price" in the H7 write-up currently rests on
+a comparison with `univar_top25_rf` at one budget plus a monotonicity claim
+imported from the coarser 10-fold sweep. A curve on the headline protocol either
+supports that number or replaces it.
+
+**Third, and registered as a check on myself:** if the model curve turns out to
+lie *below* the permutation curve at matched *n*, then the entire +0.0116 was
+sparsity, my caveat was right, and the H7 write-up's "recoverable ranking
+quality" term goes to zero — which would make the sparsity explanation of the
+loop's accuracy deficit *total* rather than merely dominant. That is a cleaner
+result than H8 and I would rather have it than be right.
+
+**Run:** `scripts/eval_sparsity.py --jobs 16`, 12 arms x 25 folds, paired on
+identical folds, ~30 min (permutation fits are 127 s against the model arm's
+~35 s). Nothing already published is recomputed.
+
+---
+
+## Turn 12, second part — codex takes the ceiling apart, and is right about all of it
+
+Asked `codex exec` for the strongest reason the saturation ceiling is "wrong,
+circular, trivial, or mis-stated", naming three specific angles. It found
+problems on all three plus a scope error, and I am accepting every one.
+
+> The strongest objection is that this is a tautological endpoint bound, not an
+> identity and not a substantive property of max-support calibration. [...]
+> Because the fitted quantile satisfies tau <= 1, P(M < tau) <= P(M < 1) =
+> 1 - P(M = 1). That is the entire "ceiling." It follows immediately from
+> boundedness and the `>=` comparison [...] It does not explain why saturation
+> occurs, predict its probability, or distinguish this procedure from any other
+> bounded score.
+
+Correct, and it is the objection I should have anticipated. I called it an
+"identity" that "predicts rather than describes". It is an inequality, it is
+one line from boundedness plus the comparison operator, and calling it a
+discovery was self-flattery.
+
+> The "independent of alpha" language is misleading. The endpoint bound is
+> numerically independent of alpha, but whether it binds is highly
+> alpha-dependent because alpha determines whether the quantile reaches 1.
+
+Correct.
+
+> the report/test classify a level as pinned using only `tau_mean >= 0.999`,
+> which does not establish that every split actually used tau = 1.
+
+Correct, and **checkably** so — I had `tau_min` in the JSON and used the mean.
+`abstain_model` at alpha = 0.05 has `tau_mean` = 0.9999 but `tau_min` = 0.9208,
+so my "pinned" label on that row was false by the criterion I claimed to be
+using.
+
+> P(M=1) is not a property of "the threshold rule". It depends on the bootstrap
+> count, selection depth, attribution/ranking method, candidate count, tie
+> handling, null-generation scheme [...] It is therefore a property of the
+> complete score-generating experiment.
+
+Correct. So is the scope error it adds: a rule comparing with strict `>` at 1,
+or thresholding an unbounded score, escapes the bound entirely, which makes
+"any max-support threshold rule" false as written.
+
+### What chasing the `tau_min` point turned up, which is the actual result
+
+Following codex's (b) to its end produced something better than the thing it
+demolished. If `tau_min` = 0.9208 at alpha = 0.05 and `tau_min` = 1.0 at
+alpha = 0.01, why is the measured control **0.880000 at both, to six decimals**?
+
+Because the statistic is discrete. Support is a count over `n_boot` = 12
+resamples, so the null max lives on multiples of 1/12. The observed null max
+values are exactly {1.000 (24 replicates), 0.9167 (47), 0.8333 (54), 0.750
+(46), ...} — **nothing between 11/12 and 1**. Every threshold in that gap
+selects the same replicates and returns the same number. Alpha moves the
+threshold within a gap without moving the answer.
+
+Which generalises: control as a function of tau is a **step function**, and only
+`n_boot` + 1 values are attainable at any alpha:
+
+> attainable control = { 1 - P(M >= k / `n_boot`) : k = 1 .. `n_boot` }
+
+| arm | P(M=1) | attainable control above 0.60 | closest to 0.95 |
+|---|---|---|---|
+| `select_k = 40`, permutation | 1.5% | 0.985, 0.920, 0.790 | 0.920 |
+| `select_k = 40`, model | 12.0% | 0.880, 0.645 | 0.880 |
+| `select_k = 5`, permutation | 0.0% | 1.000, 0.995, 0.955, 0.875, 0.625 | 0.955 |
+| `select_k = 5`, model | 0.5% | 0.995, 0.990, 0.965, 0.935, 0.905, 0.805, 0.655 | 0.935 |
+
+**No arm can land on 0.95, and for one of them the entire attainable set above
+0.60 is a single value.** That is not a calibration failure, it is a resolution
+limit, and the parameter that sets it is `n_boot` — chosen in this repo for
+compute cost, never once discussed as governing the false-discovery guarantee.
+The endpoint bound codex called trivial is one corner of this; the coarseness
+is the part worth reporting, and it is not a restatement of how quantiles work.
+
+Rewritten in `RESULTS.md` under "What error control is achievable at all", with
+the trivial corner labelled trivial in the text, the alpha language corrected,
+the scope restricted to these arms under this protocol, and `tau_min`/`tau_max`
+reported per level. The test is replaced too: it no longer asserts a "cap
+identity" but checks that measured control sits on the grid and that every
+exact tie between alpha levels is explained by a gap containing no null
+replicate. `paper_draft.md` 5.6 is rewritten and no longer calls this the most
+transferable finding in the paper.
+
+---
+
+## Turn 12, third part — H8 refuted: the AUC effect was sparsity all along
+
+`scripts/eval_sparsity.py --jobs 16`, 300 fits, 22.1 min → `runs/sparsity.json`.
+`max_select` swept over {5, 10, 15, 20, 25, 40} for both attribution
+statistics, everything else at the pre-registered operating point, headline
+25-fold protocol, paired per fold.
+
+| `max_select` | perm AUC | perm n | model AUC | model n | n gap | model - perm |
+|---|---|---|---|---|---|---|
+| 5 | 0.6865 | 5.0 | 0.6843 | 5.0 | +0.0 | **-0.0022** |
+| 10 | 0.7045 | 9.9 | 0.7015 | 10.0 | +0.1 | **-0.0031** |
+| 15 | 0.7146 | 14.5 | 0.7193 | 15.0 | +0.5 | +0.0046 |
+| 20 | 0.7193 | 17.9 | 0.7256 | 20.0 | +2.1 | +0.0064 |
+| 25 | 0.7172 | 19.8 | 0.7288 | 25.0 | +5.1 | +0.0116 |
+| 40 | 0.7199 | 21.8 | 0.7368 | 32.1 | +10.3 | +0.0168 |
+
+**H8 predicted the model curve would sit above the permutation curve at matched
+size by +0.005 to +0.020. At the two rungs where the arms take the same number
+of sensors it sits fractionally *below*, at -0.0022 and -0.0031.** The
+pre-registered sign count is 0 of 1 strictly matched rungs, and the fuller
+picture is stronger than that count: the paired difference correlates with the
+sparsity gap at **r = 0.924**, and at 0.00284 AUC per sensor the 5.1-sensor gap
+at `max_select` = 25 predicts +0.0145 against the +0.0116 observed. Sparsity
+alone accounts for the effect.
+
+So the attribution statistic buys **nothing** on accuracy. It is worth 13 points
+of selection stability, 2.2 points of error control at a suitable depth, and
+zero AUC.
+
+### Which of my own two statements was right, and why the wrong one was wrong
+
+This repository said both of these about the same number, one turn apart:
+
+1. (Turn 11, in `RESULTS.md`) read +0.012 as an upper bound, not an estimate,
+   because the arms are not sparsity-matched.
+2. (Turn 12, pre-run) the effect will survive matching, because
+   `runs/secom_loop_sweep.json` shows the model arm scoring higher on 8 fewer
+   sensors.
+
+(1) was right. (2) was wrong, and the reason is instructive: those sweep arms
+differ in `select_k` and `stability_min` as well as in sparsity and attribution.
+**I wrote that caveat down in the same paragraph and then let the dominance
+relation drive the prediction anyway.** Noting a confound is not the same as
+propagating it, and I did the first without the second.
+
+I registered before the run that a refutation here would be the cleaner result
+and that I would rather have it than be right. That was easy to write and I want
+to check it against what actually happened: the refutation removes a +0.012 term
+I had already published a decomposition around, so the H7 write-up needed a
+withdrawal rather than a footnote. It is withdrawn in `RESULTS.md` in place, and
+the headline conclusion it supported is not weakened but strengthened — the
+loop's -0.042 AUC deficit is **sparsity price in full**, with no recoverable
+ranking component at all.
+
+`n_boot` = 12 and `max_select` are now the two parameters this repository can
+show govern its headline metrics, and neither was ever tuned or discussed.

@@ -430,68 +430,65 @@ orthogonally, and any claim about "the pipeline's confidence" has to name which
 column and which depth it refers to. Our reporting code now pairs arms by depth
 and cannot cross them.
 
-### 5.6 The ceiling on a max-support threshold rule
+### 5.6 What error control is attainable, and why the levels tie
 
 Running the same one-field change at the pre-registered depth does not
 replicate section 5.5 — it inverts it. Error control goes from 91.6% to 88.0%,
 a 3.6-point regression where the identical change at `select_k = 5` was a
-2.2-point gain. The reason is visible in the alpha ladder: the model-native arm
-reports **the same 88.0% control and 2.80 suspects at alpha = 0.05 and at
-alpha = 0.01**, while the permutation arm moves normally from 91.6% to 97.7%. A
-rate that has stopped responding to alpha is reporting a constraint, and the
-constraint is arithmetic rather than statistical.
+2.2-point gain. And the model-native arm reports **the same 88.0% control at
+alpha = 0.05 and alpha = 0.01** while the permutation arm moves normally from
+91.6% to 97.7%. A rate that has stopped responding to alpha is reporting a
+structural constraint.
 
-Bootstrap selection frequency is bounded above by 1. If some sensor is selected
-in every resample of a null replicate, that replicate's max-statistic equals
-1.000 exactly, and no threshold at or below 1.000 can exclude it. Writing
-`s_sat` for the share of null replicates in which this happens, the error
-control attainable by any rule of the form "report suspect *j* iff its support
-`s_j >= tau`" is bounded by
+The constraint is the discreteness of the statistic being thresholded. A
+suspect's bootstrap support is a count over `n_boot` resamples divided by
+`n_boot`, so the null max-statistic *M* takes values on {0, 1/`n_boot`, …, 1}.
+Error control as a function of the threshold is a step function, and only
+`n_boot` + 1 of its values are attainable at any alpha:
 
-    control <= 1 - s_sat,
+    attainable control = { 1 − P(M >= k / n_boot) : k = 1 … n_boot }.
 
-with no dependence on alpha. The bound is attained precisely when the fitted
-`tau` is itself pinned at 1.000; below that, control is `1 - P(null max >= tau)`
-and comes in under the ceiling because the replicates whose maximum lands in
-`[tau, 1.000)` are admitted.
+The largest element of that set is 1 − P(M = 1). We flag that corner as
+uninteresting on its own: it follows in one line from the support being bounded
+by 1 and the rule comparing with `>=`, and it does not hold for a rule using a
+strict `>` at the boundary or thresholding an unbounded score. An earlier draft
+of this section presented it as an identity with predictive content, which an
+adversarial review correctly rejected.
 
-| arm | alpha | s_sat | implied cap | tau fitted | measured control |
-|---|---|---|---|---|---|
-| `select_k = 40`, permutation | 0.05 | 1.5% | 98.5% | 0.910 | 91.6% |
-| `select_k = 40`, model | 0.05 | 12.0% | 88.0% | 1.000 (pinned) | 88.0% |
-| `select_k = 40`, model | 0.01 | 12.0% | 88.0% | 1.000 (pinned) | 88.0% |
-| `select_k = 40`, model | 0.1 | 12.0% | 88.0% | 0.980 | 84.6% |
-| `select_k = 5`, model | 0.05 | 0.5% | 99.5% | 0.728 | 93.7% |
+What is not trivial is the coarseness of the whole set:
 
-The three rows of this paper that we had treated as separate findings are this
-one identity. Section 5.3's univariate baseline was capped at 88.5% under
-matched settings, and 11.5% of its null replicates saturated. Section 5.4's
-depth narrowing removed that cap by making saturation rare. Section 5.5's
-attribution swap helps at narrow depth and hurts at the pre-registered one. We
-had written the first as a property of that baseline and the third as a
-replication failure; both are the ceiling moving.
+| arm | `n_boot` | P(M = 1) | attainable control above 0.60 | closest to 0.95 |
+|---|---|---|---|---|
+| `select_k = 40`, permutation | 12 | 1.5% | 0.985, 0.920, 0.790 | 0.920 |
+| `select_k = 40`, model | 12 | 12.0% | 0.880, 0.645 | 0.880 |
+| `select_k = 5`, permutation | 12 | 0.0% | 1.000, 0.995, 0.955, 0.875, 0.625 | 0.955 |
+| `select_k = 5`, model | 12 | 0.5% | 0.995, 0.990, 0.965, 0.935, 0.905, 0.805, 0.655 | 0.935 |
 
-The consequence for practice is a conjunction rather than a recommendation. The
-property that makes model-native attribution a better ranker — it is more
-repeatable across resamples, which is what earns it the 13 points of selection
-stability in section 7.1 — is the same property that pins a sensor in every
-resample of a null replicate and so raises `s_sat`. Attribution statistic and
-selection depth are therefore not independent knobs: a statistic repeatable
-enough to be worth using must be paired with a depth narrow enough to keep its
-null max-statistic off the ceiling, and either alone is a regression. We report
-this as the most transferable finding in the paper, because it applies to any
-stability-selection procedure calibrated by a max-statistic null, not only to
-the pipeline studied here.
+No arm can land on 0.95, and for one of them the entire attainable set above
+0.60 is a single value. The misses are a property of the grid, not of the
+calibration, and the parameter that sets the grid is `n_boot` — a quantity
+chosen for compute cost, with no prior indication in this literature or in our
+own earlier drafts that it governs the achievable false-discovery guarantee.
 
-A methodological remark on how nearly we got this wrong in the other direction.
-Our first statement of the identity asserted that control is alpha-invariant
-whenever the cap binds, which is false: it is alpha-invariant only where `tau`
-pins, and the `alpha = 0.1` row above is the counterexample. The assertion was
-caught by a regression test written to guard the claim, which failed on that row
-within minutes of the claim being written. We mention it because the ceiling is
-the kind of clean result that invites over-statement, and the distinction
-between "the bound holds" and "the bound is attained" is exactly what a reader
-would need to reproduce it.
+The grid also explains the tie exactly. With `n_boot` = 12 the null max has an
+atom at 1.000 and no mass between 11/12 = 0.917 and 1.000, so every threshold
+in that gap selects the same replicates. The two levels agree not because their
+thresholds are equal — the smallest threshold fitted across splits is 0.921 at
+alpha = 0.05 and 1.000 at alpha = 0.01 — but because both land in the same gap.
+Alpha-invariance here is local to a gap, and our first statement of it as
+holding "with no dependence on alpha" was wrong.
+
+Finally, P(M = 1) is a property of the whole score-generating experiment —
+bootstrap count, selection depth, attribution statistic, candidate-pool size,
+null construction — and not of max-support thresholding as such. We therefore
+make no claim about stability selection in general. What we do claim, and what
+transfers as a caution rather than a theorem, is the coupling it produces: a
+more repeatable attribution statistic pins a sensor across more resamples,
+raising P(M = 1) and pushing the top of the attainable set down, while a
+narrower selection depth lowers it again. That is why the same one-field swap
+helps at one depth and hurts at the other, and why the two parameters cannot be
+tuned independently.
+
 
 ---
 

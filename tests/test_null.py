@@ -346,27 +346,29 @@ def test_bare_ranker_cells_are_the_same_construction():
     assert not np.array_equal(m, a), "the two statistics should not coincide"
 
 
-# ------------------------------- the ceiling on a max-support threshold rule
-def test_saturation_caps_error_control_where_it_binds():
-    """control <= 1 - P(null replicate saturates), attained when it binds.
+# --------------------------- what error control is attainable at the grid
+def test_attainable_control_is_a_grid_set_by_n_boot():
+    """Control lands on the grid {1 - P(M >= k/n_boot)}, and that explains the ties.
 
-    Bootstrap selection frequency is bounded above by 1, so a null replicate
-    with some sensor selected in every resample has max-statistic exactly
-    1.000 and no threshold at or below 1.000 excludes it. That makes the
-    reachable error control capped at 1 - P(saturation), with no dependence on
-    alpha -- which is why `select_k=40, attribution="model"` reports the same
-    88.0% at alpha = 0.05 and alpha = 0.01.
+    An earlier version of this test asserted a "saturation cap identity" and an
+    alpha-invariance that an adversarial review showed was mis-stated: the
+    endpoint bound is a one-line consequence of boundedness plus the `>=`
+    comparison, and the invariance is local to a gap in the grid rather than
+    global. What is actually checkable, and what `RESULTS.md` now claims, is
+    the grid structure itself.
 
-    This is asserted rather than described because it is the mechanism that
-    makes the attribution recommendation conditional, and a future run that
-    broke the identity would silently invalidate that recommendation.
+    Two assertions. First, every measured control value sits at (or within
+    calibration slack of) some attainable grid point -- if it did not, the
+    step-function account would be wrong. Second, the ties are explained: two
+    alpha levels reporting identical control must have thresholds that fall in
+    the same grid gap, i.e. no null replicate's max lies between them.
     """
     import json
 
     pairs = [("null_fdr", "abstain"), ("null_fdr_model", "abstain_model"),
              ("null_fdr_k5", "abstain_k5"),
              ("null_fdr_k5_model", "abstain_k5_model")]
-    checked = 0
+    checked = ties = 0
     for nf_name, ab_name in pairs:
         nf_p = ROOT / "runs" / f"{nf_name}.json"
         ab_p = ROOT / "runs" / f"{ab_name}.json"
@@ -374,39 +376,44 @@ def test_saturation_caps_error_control_where_it_binds():
             continue
         nf = json.loads(nf_p.read_text())
         ab = json.loads(ab_p.read_text())
+        nb = nf["protocol"]["agent_cfg"]["n_boot"]
         mx = np.asarray([r["max_stability"] for r in nf["records"]
                          if r["permuted"]], dtype=float)
-        cap = 1.0 - float((mx >= 1.0).mean())
-        for key, lv in (ab.get("levels") or {}).items():
-            ctl = lv["null_abstention_heldout"]
-            # The bound itself, with a small slack for the split-half
-            # calibration measuring the cap on halves of the null.
-            assert ctl <= cap + 0.02, (
-                f"{nf_name}/{key}: control {ctl:.3f} exceeds the saturation "
-                f"cap {cap:.3f}, so the identity in RESULTS.md is wrong")
-            checked += 1
-        # And the alpha-invariance signature, stated precisely. The cap is an
-        # upper bound at every alpha, but it is *attained* only where the
-        # fitted threshold has itself pinned at the top of the support scale:
-        # control = 1 - P(null max >= tau), so tau < 1.000 admits the null
-        # replicates whose max lands in [tau, 1.000) and control drops below
-        # the cap. This test first asserted invariance across *all* alphas and
-        # failed on `null_fdr_model` at alpha = 0.1, where tau = 0.980 and
-        # control is 84.6% against an 88.0% cap -- the assertion was stronger
-        # than the mechanism. Restricted to the pinned levels, it holds.
+        grid = sorted({float(1.0 - (mx >= k / nb).mean())
+                       for k in range(1, nb + 1)})
         lv = ab.get("levels") or {}
-        pinned = [k for k in lv if lv[k].get("tau_mean", 0.0) >= 0.999]
-        if len(pinned) > 1:
-            vals = {round(lv[k]["null_abstention_heldout"], 4)
-                    for k in pinned}
-            assert len(vals) == 1, (
-                f"{nf_name}: tau pins at 1.000 for {sorted(pinned)} but "
-                f"control still varies across them ({vals}), which the "
-                f"mechanism forbids -- once the threshold is at the ceiling, "
-                f"alpha cannot move it")
-            for k in pinned:
-                assert abs(lv[k]["null_abstention_heldout"] - cap) < 0.005, (
-                    f"{nf_name}/{k}: tau is pinned at 1.000 so control must "
-                    f"equal the cap {cap:.3f}, measured "
-                    f"{lv[k]['null_abstention_heldout']:.3f}")
-    assert checked >= 6, f"only {checked} (arm, alpha) pairs checked"
+
+        for key, m in lv.items():
+            ctl = m["null_abstention_heldout"]
+            # The split-half average can fall between two grid points when
+            # different splits sit on different rungs, so the check is that it
+            # lies within the grid's range and no further than one step from
+            # some rung.
+            step = max(1.0 / nb, 0.02)
+            assert min(abs(ctl - g) for g in grid) <= step, (
+                f"{nf_name}/{key}: control {ctl:.4f} is more than one grid "
+                f"step from every attainable value {grid}")
+            checked += 1
+
+        keys = sorted(lv)
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                a_, b_ = lv[keys[i]], lv[keys[j]]
+                if abs(a_["null_abstention_heldout"]
+                       - b_["null_abstention_heldout"]) > 1e-9:
+                    continue
+                lo = min(a_["tau_min"], b_["tau_min"])
+                hi = max(a_["tau_max"], b_["tau_max"])
+                # Identical control with different thresholds is only possible
+                # if no null replicate's max separates them.
+                between = int(((mx >= lo) & (mx < hi)).sum())
+                assert between == 0 or abs(lo - hi) < 1e-9, (
+                    f"{nf_name}: {keys[i]} and {keys[j]} report identical "
+                    f"control but {between} null replicates have max in "
+                    f"[{lo:.4f}, {hi:.4f}), so the tie is not explained by a "
+                    f"gap in the grid")
+                ties += 1
+    assert checked >= 8, f"only {checked} (arm, alpha) pairs checked"
+    assert ties >= 1, "expected at least one exact tie to explain"
+
+

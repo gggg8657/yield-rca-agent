@@ -52,7 +52,7 @@ not met on any protocol.**
 
 ---
 
-## The nine new results
+## The eleven new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -391,12 +391,12 @@ zero." **Measured 0.729 [0.710, 0.748].**
 | `univar_top25_rf` (naive selection, same budget) | 0.730 | −0.0009 [−0.0146, +0.0129] | 0.711 |
 | `agent_rf` (permutation attribution) | 0.717 | +0.0116 [−0.0006, +0.0237] | 0.071 |
 
-**The loop's −0.042 decomposes into ~+0.012 of recoverable ranking quality and
-−0.030 of irreducible sparsity price.** Better attribution collects the first
-and cannot touch the second, because the second is what *any* method paying for
-a 25-sensor budget owes on a dataset whose signal is spread across hundreds of
-weak sensors. And with a decent statistic the whole apparatus lands
-indistinguishably on top of "rank each sensor alone, keep 25" (p = 0.71).
+With a decent statistic the whole apparatus lands indistinguishably on top of
+"rank each sensor alone, keep 25" (p = 0.71).
+
+*I originally wrote here that the −0.042 decomposes into ~+0.012 of recoverable
+ranking quality plus −0.030 of sparsity price. **Result 10 withdraws the first
+term** — it was the extra sensors, not the ranking.*
 
 I registered in advance that this is the **worse** outcome for the architecture,
 and it is. Bad ranking is repairable; the decision to select at all is the
@@ -404,11 +404,9 @@ premise, not a parameter.
 
 Two reasons not to bank the +0.012, both cutting against the arm: p = 0.071 is
 not significant, and the model arm selects **25.0** sensors per fold against
-19.8 — which is `max_select` exactly, so it is pinned at its own budget and
-would have taken more. Selection costs AUC monotonically here, so part of that
-gain is less sparsity rather than better ranking. **Read +0.012 as an upper
-bound on what attribution buys, not an estimate.** A sparsity-matched rerun is
-the ablation this now demands (see the decisions section).
+19.8 — which is `max_select` exactly, so it is pinned at its own budget. **Read
++0.012 as an upper bound, not an estimate.** That caveat turned out to be the
+whole story: see result 10.
 
 ### 9. A claim that was true for the wrong reason, worth −0.002 AUC
 
@@ -429,6 +427,72 @@ as a save: it moved nothing. What it bought is that the equality is now true by
 construction (`make_rf_tuned`, shared with no edit to `arms.rf_all`, which
 produced the published 0.759) and asserted by a test, so retuning either side
 now fails loudly instead of leaving a stale docstring.
+
+### 10. The AUC effect was sparsity all along (H8 refuted)
+
+The ablation result 8 demanded. `max_select` swept over {5, 10, 15, 20, 25, 40}
+for **both** attribution statistics, everything else at the pre-registered
+operating point, headline 25-fold protocol, paired per fold. 300 fits, 22 min.
+
+| `max_select` | perm AUC | perm n | model AUC | model n | n gap | model − perm |
+|---|---|---|---|---|---|---|
+| 5 | 0.6865 | 5.0 | 0.6843 | 5.0 | +0.0 | **−0.0022** |
+| 10 | 0.7045 | 9.9 | 0.7015 | 10.0 | +0.1 | **−0.0031** |
+| 15 | 0.7146 | 14.5 | 0.7193 | 15.0 | +0.5 | +0.0046 |
+| 20 | 0.7193 | 17.9 | 0.7256 | 20.0 | +2.1 | +0.0064 |
+| 25 | 0.7172 | 19.8 | 0.7288 | 25.0 | +5.1 | +0.0116 |
+| 40 | 0.7199 | 21.8 | 0.7368 | 32.1 | +10.3 | +0.0168 |
+
+**H8 predicted the model curve would sit above the permutation curve at matched
+size by +0.005 to +0.020. At the two rungs where both arms take the same number
+of sensors it sits fractionally below.** The paired difference correlates with
+the sparsity gap at **r = 0.924**, and at **+0.00284** AUC per sensor the
+5.1-sensor gap at cap 25 predicts +0.0145 against the +0.0116 observed.
+
+**So the attribution statistic buys nothing on accuracy.** It is worth 13 points
+of selection stability, 2.2 points of error control at a suitable depth, and
+zero AUC. The loop's −0.042 deficit is **sparsity price in full** — which is a
+*stronger* version of result 8's conclusion, not a weaker one.
+
+I said both of these, one turn apart: (1) read +0.012 as an upper bound because
+the arms are not sparsity-matched; (2) the effect will survive matching, because
+the old sweep shows the model arm scoring higher on 8 fewer sensors. (1) was
+right. (2) leaned on sweep arms that differ in `select_k` and `stability_min`
+too — a confound I wrote down in the same paragraph and then let drive the
+prediction anyway. Noting a confound is not the same as propagating it.
+
+### 11. The ceiling claim was mostly wrong; what replaced it is better
+
+An adversarial review (`codex`) took apart the "saturation cap identity" I
+published last turn and was right on every count: it is an *inequality* not an
+identity, one line from the support being bounded by 1 and the rule comparing
+with `>=`; "independent of alpha" is misleading because alpha decides whether it
+binds; `P(M=1)` is a property of the whole experiment, not of the rule; and
+"any max-support threshold rule" is false for a rule using strict `>`. I had
+also labelled rows "pinned" using `tau_mean` when `tau_min` was sitting in the
+same JSON — and by the strict criterion one of those labels was false.
+
+Chasing that last point produced the replacement, which is not vacuous. Support
+is a count over `n_boot` = 12 resamples, so the null max lives on multiples of
+1/12 and **error control is a step function with at most `n_boot` + 1 attainable
+values**:
+
+| arm | P(M=1) | attainable control above 0.60 | closest to 0.95 |
+|---|---|---|---|
+| `select_k = 40`, permutation | 1.5% | 0.985, 0.920, 0.790 | 0.920 |
+| `select_k = 40`, model | 12.0% | 0.880, 0.645 | 0.880 |
+| `select_k = 5`, permutation | 0.0% | 1.000, 0.995, 0.955, 0.875, 0.625 | 0.955 |
+| `select_k = 5`, model | 0.5% | 0.995, 0.990, 0.965, 0.935, 0.905, 0.805, 0.655 | 0.935 |
+
+**No arm can land on 0.95** — not a calibration failure, a resolution limit. And
+it explains the exact tie: 0.880000 at both α = 0.05 and α = 0.01 despite
+different thresholds, because the null max has an atom at 1.000 and no mass
+between 11/12 = 0.917 and 1.000, so every threshold in that gap gives the same
+answer.
+
+**`n_boot` and `max_select` are now the two parameters this repo can show govern
+its headline metrics, and neither was ever tuned or discussed.** That is the
+most useful thing to come out of the last two turns.
 
 ---
 
@@ -555,28 +619,25 @@ is still open — it needs a call, not more measurement.
 
 ## Still running / how to check
 
-**Nothing is running.** Everything queued this session has landed: H6 at both
-depths, `model_only`, H7 and the `PredictAllReportFew` correction. `git status`
-is clean, `scripts/report.py --check` is in sync, `scripts/audit_weekend.py`
-traces 78 numeric claims in this file to 14 run JSONs, and 45 tests pass.
+**Nothing is running.** `git status` clean, `scripts/report.py --check` in sync,
+`scripts/audit_weekend.py` traces 97 numeric claims in this file to 15 run
+JSONs, 45 tests pass.
 
-The one ablation the last result *demands*, for whoever picks this up:
-**a sparsity-matched rerun of H7.** `agent_model_rf` selects 25.0 sensors per
-fold against `agent_rf`'s 19.8, and 25.0 is `max_select` exactly, so the arm is
-pinned at its budget. Since selection costs AUC monotonically on this dataset,
-part of its +0.0116 AUC gain is less sparsity rather than better ranking, and
-the two arms are not matched on the thing this repo has shown matters most.
-Either raise `max_select` for both arms or drop it to 19 for the model arm:
+The next experiment, written down but not run, follows directly from result 11:
 
-```bash
-OMP_NUM_THREADS=1 ~/miniforge3/envs/pybamm-inv/bin/python \
-  scripts/eval_attr_arm.py --jobs 16 --out runs/attr_arm_matched.json
-# after editing max_select in scripts/arms.py AGENT_CFG, or adding a flag
-```
+> **H9.** If error control is limited by the resolution of a 12-point grid,
+> raising `n_boot` should refine the grid and let a nominal level be reached.
+> Concretely: `null_fdr.py --n-boot 40 --select-k 5 --attribution model` should
+> produce an attainable set containing a value within 0.01 of 0.95, where the
+> `n_boot = 12` version's closest is 0.935.
 
-It takes about 2 minutes. Until it exists, **+0.012 is an upper bound on what
-attribution buys on accuracy, not an estimate**, and `RESULTS.md` says so where
-the number appears.
+That is a real prediction and it may well fail — the grid refines, but
+`P(M = 1)` may also *rise* with more resamples if a sensor that is selected in
+12 of 12 is also selected in 40 of 40, which would push the top of the set down
+even as its spacing improves. Those two effects run in opposite directions and
+which dominates is not something this repo has measured. `null_fdr.py` has no
+`--n-boot` flag yet; adding one is a two-line change of the same shape as
+`--select-k` and `--attribution`.
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
 (11 stages, CPU only, 16 workers). Tests: **41 collected, all green** as of the

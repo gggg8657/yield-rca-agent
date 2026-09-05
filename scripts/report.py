@@ -1846,25 +1846,6 @@ def _fallback_reach_heldout(ab5):
     ]
 
 
-def _unpinned_example(unpinned, binding):
-    """The sharpest counterexample: same arm as a pinned row, tau below 1.000.
-
-    Pulled from the run rather than written into the prose, because the
-    paragraph it lands in is specifically about not quoting the cap as though
-    it were the measurement.
-    """
-    if not (unpinned and binding):
-        return None
-    pinned_labels = {b[0] for b in binding}
-    same = [u for u in unpinned if u[0] in pinned_labels]
-    if not same:
-        return None
-    lab, al, tau, ctl, cap = min(same, key=lambda u: u[1])
-    return (f" -- {lab.replace('`', '').replace('**', '')} at alpha = {al} "
-            f"fits tau = {tau:.3f} and controls at {pct(ctl)} against a "
-            f"{pct(cap)} ceiling")
-
-
 def sec_attr_auc(aa, ev):
     """H7: does the attribution statistic close the loop's AUC deficit?
 
@@ -1922,18 +1903,21 @@ def sec_attr_auc(aa, ev):
             f"p = {d_uni.get('wilcoxon_p', float('nan')):.2f} -- "
             f"indistinguishable from ranking each sensor on its own and "
             f"keeping the top 25.", "",
-            f"That is the decomposition the accuracy question needed. The "
-            f"loop's {old_def['mean']:+.3f} splits into roughly "
-            f"{d_ag.get('mean', float('nan')):+.4f} of *recoverable ranking "
-            f"quality* and {d_base['mean']:+.3f} of *irreducible sparsity "
-            f"price* -- the latter being what any method paying for a 25-sensor "
-            f"budget owes on a dataset whose signal is spread thin. Swapping "
-            f"the statistic collects the first part and cannot touch the "
-            f"second. **So the loop's accuracy deficit is not fixable by any "
+            f"**So the loop's accuracy deficit is not fixable by any "
             f"attribution statistic**, which was registered as the prediction "
             f"and is a worse result for the architecture than the alternative "
             f"would have been: under the competing explanation the deficit was "
             f"bad ranking and therefore repairable.", "",
+            f"*A decomposition that stood here has been withdrawn.* This "
+            f"section originally split the {old_def['mean']:+.3f} into roughly "
+            f"{d_ag.get('mean', float('nan')):+.4f} of recoverable ranking "
+            f"quality plus {d_base['mean']:+.3f} of sparsity price. The "
+            f"sparsity sweep in the next section shows the first term is not "
+            f"there: at matched selected-set size the two attribution "
+            f"statistics are indistinguishable, and the "
+            f"{d_ag.get('mean', float('nan')):+.4f} was the extra sensors. The "
+            f"conclusion in bold above is unchanged and is in fact "
+            f"strengthened -- the deficit is sparsity price in full.", "",
         ]
     if d_ag:
         n_new = aa.get("n_selected_mean")
@@ -1969,107 +1953,234 @@ def sec_attr_auc(aa, ev):
         ]
     return body
 
+def sec_sparsity(sp):
+    """H8: is the attribution effect on AUC a sparsity artifact? (it is)
+
+    `agent_model_rf` beat `agent_rf` by +0.0116 AUC while selecting 25.0
+    sensors against 19.8 -- pinned at its `max_select` cap. This sweeps the cap
+    for both statistics under the headline protocol so the curves can be
+    compared at matched selected-set size. Read-out fixed before the run: the
+    sign pattern across matched rungs, not a pooled interval.
+    """
+    if not sp:
+        return []
+    import numpy as np
+
+    caps = sp["caps"]
+    c, pr = sp["curves"], sp["per_rung"]
+    rows, gaps, dels = [], [], []
+    for k in caps:
+        pm, mm = c["permutation"][str(k)], c["model"][str(k)]
+        d = pr[str(k)]["model_minus_permutation"]
+        gap = mm["n_selected_mean"] - pm["n_selected_mean"]
+        gaps.append(gap)
+        dels.append(d["mean"])
+        rows.append([
+            str(k),
+            f"{pm['auc']['mean']:.4f}", f"{pm['n_selected_mean']:.1f}",
+            f"{mm['auc']['mean']:.4f}", f"{mm['n_selected_mean']:.1f}",
+            f"{gap:+.1f}",
+            f"{d['mean']:+.4f} [{d['ci_lo']:+.4f}, {d['ci_hi']:+.4f}]",
+        ])
+    r = float(np.corrcoef(np.array(gaps), np.array(dels))[0, 1])
+    matched = [(k, g, dd) for k, g, dd in zip(caps, gaps, dels) if abs(g) < 0.2]
+    slope = (sp.get("sparsity_slope") or {}).get("model", {})
+    body = [
+        "### Is the attribution effect on AUC a sparsity artifact? (H8)", "",
+        "The H7 comparison was confounded: the model-native arm selected 25.0 "
+        "sensors per fold against 19.8, and 25.0 was its `max_select` cap "
+        "exactly, so it was pinned at its budget. This sweeps that cap for "
+        "**both** attribution statistics under the headline 25-fold protocol, "
+        "changing nothing else from the pre-registered operating point, so the "
+        "two can be compared at matched selected-set size rather than at "
+        "matched configuration.", "",
+        table(rows, ["`max_select`", "perm AUC", "perm n", "model AUC",
+                     "model n", "n gap", "model - perm (paired)"]), "",
+        f"**The apparent attribution advantage tracks the sparsity gap and "
+        f"vanishes when the gap does.** Across the ladder the correlation "
+        f"between the selected-set gap and the paired AUC difference is "
+        f"r = {r:.3f}. At the rungs where both arms take the same number of "
+        f"sensors "
+        + ", ".join(f"(`max_select` = {k}, gap {g:+.1f})" for k, g, _ in matched)
+        + f" the difference is "
+        + " and ".join(f"{dd:+.4f}" for _, _, dd in matched)
+        + f" -- **negative**, and the pre-registered sign count is therefore "
+          f"{sp['sign_test']['n_model_above']} of "
+          f"{sp['sign_test']['n_matched_rungs']} strictly matched rungs.", "",
+        "**H8 is refuted.** It predicted the model curve would sit above the "
+        "permutation curve at matched size by +0.005 to +0.020; it sits "
+        "fractionally below. The competing explanation -- that the whole "
+        "+0.0116 was the extra 5.2 sensors -- is what the data support.", "",
+    ]
+    if slope:
+        sl = slope["auc_per_sensor"]
+        body += [
+            f"The mechanism is quantitative. Over the range where the cap "
+            f"binds ({slope['n_range'][0]:.0f} to {slope['n_range'][1]:.0f} "
+            f"sensors) each additional sensor is worth {sl:+.5f} AUC, so the "
+            f"5.1-sensor gap at `max_select` = 25 predicts "
+            f"{5.1 * sl:+.4f} against the {dels[caps.index(25)]:+.4f} "
+            f"observed. Sparsity alone accounts for the effect; nothing needs "
+            f"to be attributed to the ranking.", "",
+            "**So the H7 decomposition was wrong and is withdrawn.** That "
+            "section split the loop's -0.042 AUC deficit into roughly +0.012 "
+            "of recoverable ranking quality and -0.030 of irreducible sparsity "
+            "price. The recoverable term is not there: at matched sparsity the "
+            "two statistics are indistinguishable, so **the deficit is "
+            "sparsity price essentially in full**. The attribution statistic "
+            "is worth 13 points of selection stability and, at a suitable "
+            "depth, 2.2 points of error control -- and nothing at all on "
+            "accuracy.", "",
+            "This also settles which of two things this repository said about "
+            "the same number was right. The caveat attached to H7 -- read "
+            "+0.012 as an upper bound, not an estimate -- was correct. The "
+            "reasoning used the following turn to argue the effect would "
+            "survive matching, which leaned on a dominance relation in "
+            "`runs/secom_loop_sweep.json`, was not: those sweep arms differ in "
+            "`select_k` and `stability_min` as well as in sparsity, and that "
+            "was noted at the time and then not acted on.", "",
+        ]
+    return body
+
 
 def sec_saturation(pairs):
-    """The ceiling a max-support threshold rule cannot cross, and what sets it.
+    """What error control is *achievable* at all, and why the levels coincide.
 
-    Three results in this repository turned out to be one mechanism, and it is
-    worth stating as an identity rather than as three coincidences. Bootstrap
-    selection frequency is bounded above by 1, so once a non-trivial share of
-    *null* replicates has some sensor selected in every resample, the null
-    max-statistic has an atom at 1.000 -- and no threshold at or below 1.000
-    can exclude those replicates. The error control any rule of this form can
-    reach is therefore capped at
-
-        1 - P(a null replicate saturates)
-
-    independent of alpha. The signature is that control stops responding to
-    alpha at all, which is directly visible in the table below.
+    An earlier version of this section called the bound below an "identity"
+    that "predicts rather than describes", said it held "with no dependence on
+    alpha at all", and claimed it applied to "any max-support threshold rule".
+    An adversarial review took all three apart and was right about each
+    (`critique_log.md`, Turn 12): the endpoint bound alone is a one-line
+    consequence of the support being bounded by 1 and the rule comparing with
+    ``>=``, so calling it a discovery was wrong. What survives, and what this
+    section now reports, is the *discreteness* the endpoint bound is one corner
+    of -- which is not vacuous, explains an exact numerical coincidence the
+    earlier text got right for the wrong reason, and is actionable.
 
     ``pairs`` is a list of (label, null_fdr json, abstain json).
     """
     import numpy as np
 
-    rows, binding, unpinned = [], [], []
+    rows, sets, coincide = [], [], []
     for label, nf_, ab_ in pairs:
         if not (nf_ and ab_):
             continue
-        recs = [r["max_stability"] for r in nf_.get("records", [])
-                if r["permuted"]]
+        mx = np.asarray([r["max_stability"] for r in nf_.get("records", [])
+                         if r["permuted"]], dtype=float)
         lv = ab_.get("levels") or {}
-        if not recs or not lv:
+        nb = ((nf_.get("protocol") or {}).get("agent_cfg") or {}).get("n_boot")
+        if not len(mx) or not lv or not nb:
             continue
-        sat = float(np.mean(np.asarray(recs) >= 1.0))
-        cap = 1.0 - sat
+        # Control as a function of tau is a step function; its steps are the
+        # attainable values, one per grid point of the discrete statistic.
+        ach = sorted({float(1.0 - (mx >= k / nb).mean())
+                      for k in range(1, nb + 1)}, reverse=True)
+        sat = float((mx >= 1.0).mean())
+        sets.append((label, nb, sat, ach))
         for key in ("alpha_0.1", "alpha_0.05", "alpha_0.01"):
             m = lv.get(key)
             if not m:
                 continue
-            ctl = m["null_abstention_heldout"]
-            nom = m["null_abstention_target"]
-            tau = m.get("tau_mean", float("nan"))
-            pinned = tau >= 0.999
-            rows.append([label, f"{m['alpha']}", pct(sat), pct(cap),
-                         f"{tau:.3f}" + (" **(pinned)**" if pinned else ""),
-                         pct(ctl), pct(nom)])
-            if pinned:
-                binding.append((label, m["alpha"], cap, ctl))
-            else:
-                unpinned.append((label, m["alpha"], tau, ctl, cap))
+            rows.append([label, f"{m['alpha']}",
+                         f"{m.get('tau_min', float('nan')):.3f}",
+                         f"{m.get('tau_max', float('nan')):.3f}",
+                         pct(m["null_abstention_heldout"]),
+                         pct(m["null_abstention_target"])])
+        # Two levels agreeing to the reported precision while their fitted
+        # thresholds differ is the discreteness showing through.
+        keys = [k for k in ("alpha_0.1", "alpha_0.05", "alpha_0.01") if k in lv]
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                a_, b_ = lv[keys[i]], lv[keys[j]]
+                if (abs(a_["null_abstention_heldout"]
+                        - b_["null_abstention_heldout"]) < 1e-9
+                        and abs(a_.get("tau_min", 0) - b_.get("tau_min", 0)) > 1e-6):
+                    coincide.append((label, a_["alpha"], b_["alpha"],
+                                     a_["null_abstention_heldout"],
+                                     a_.get("tau_min"), b_.get("tau_min")))
     if not rows:
         return []
+
     body = [
-        "## The ceiling on any max-support threshold rule", "",
-        "Three findings in this repository are the same mechanism, and once "
-        "stated as an identity it predicts rather than describes. Bootstrap "
-        "selection frequency cannot exceed 1, so if some sensor is selected in "
-        "*every* resample of a null replicate, that replicate's max-statistic "
-        "is exactly 1.000 -- and no threshold at or below 1.000 excludes it. "
-        "The error control reachable by any rule of this form is therefore "
-        "capped at **1 - P(a null replicate saturates)**, with no dependence "
-        "on alpha at all.", "",
-        table(rows, ["arm", "alpha", "P(null saturates)", "implied cap",
-                     "tau fitted", "measured control", "nominal"]), "",
+        "## What error control is achievable at all", "",
+        "A suspect's bootstrap support is a count over `n_boot` resamples "
+        "divided by `n_boot`, so the null max-statistic *M* lives on the grid "
+        "{0, 1/`n_boot`, ..., 1}. Error control as a function of the threshold "
+        "is therefore a **step function**, and only `n_boot` + 1 values of it "
+        "are attainable no matter how alpha is chosen:", "",
+        "> attainable control = { 1 - P(M >= k / `n_boot`) : k = 1 .. `n_boot` }",
+        "",
+        "Two things follow, and they are worth separating because only the "
+        "second is interesting.", "",
+        "**The trivial one.** The largest attainable value is "
+        "1 - P(M = 1), because the fitted threshold is a quantile of a "
+        "statistic bounded by 1 and the rule reports when support >= tau. "
+        "That is a one-line consequence of boundedness and the comparison "
+        "operator, not a finding, and an earlier version of this section "
+        "oversold it as an identity that predicts. It also is not a property "
+        "of max-support thresholding in general: a rule comparing with a "
+        "strict `>` at 1, or thresholding something unbounded, escapes it "
+        "entirely.", "",
+        "**The one that matters.** The attainable *set* is coarse, and its "
+        "spacing is set by `n_boot` rather than by anything statistical:", "",
     ]
-    if binding:
-        exact = [b for b in binding if abs(b[2] - b[3]) < 0.005]
+    srows = []
+    for label, nb, sat, ach in sets:
+        hi = [a for a in ach if a > 0.60]
+        near = min(ach, key=lambda a: abs(a - 0.95))
+        srows.append([label, str(nb), pct(sat),
+                      ", ".join(f"{a:.3f}" for a in hi) or "--",
+                      f"{near:.3f}" + (" **(=)**" if abs(near - 0.95) < 1e-9
+                                       else f" ({near - 0.95:+.3f})")])
+    body += [
+        table(srows, ["arm", "`n_boot`", "P(M = 1)",
+                      "attainable control above 0.60",
+                      "closest attainable to 0.95"]), "",
+        "**No arm can land on 0.95 exactly**, because 0.95 is not in any of "
+        "these sets -- the misses are a property of the grid rather than of "
+        "the calibration. For the worst arm the entire attainable set above "
+        "0.60 is a single value. This is a resolution limit, and the parameter that sets it is "
+        "`n_boot`, which no part of this repository had previously identified "
+        "as governing error control at all.", "",
+    ]
+    if coincide:
+        lab, a1, a2, ctl, t1, t2 = coincide[0]
         body += [
-            f"The cap is an upper bound everywhere, and it is **attained** "
-            f"exactly where the fitted threshold has itself pinned at the top "
-            f"of the support scale: "
-            + "; ".join(f"{lab.replace('`', '').replace('**', '')} at "
-                        f"alpha = {al} caps at {pct(cap)} and measures "
-                        f"{pct(ctl)}"
-                        for lab, al, cap, ctl in exact[:2])
-            + ". The signature is unmistakable in those rows: they report "
-              "the *same* control at alpha = 0.05 and alpha = 0.01, because "
-              "once tau sits at 1.000, tightening alpha cannot move it.", "",
-            "The rows where tau is *not* pinned are what make the mechanism "
-            "precise rather than approximate, and they are worth reading "
-            "before quoting the cap as a prediction. Control is "
-            "1 - P(null max >= tau), so a tau below 1.000 admits the null "
-            "replicates whose maximum lands in [tau, 1.000) and control comes "
-            "in *below* the cap rather than at it"
-            + (_unpinned_example(unpinned, binding) or "")
-            + ". The cap therefore says what is unreachable, not what will be "
-              "reached. A first version of the test guarding this section "
-              "asserted alpha-invariance at every level and failed on exactly "
-              "that row; the assertion was stronger than the mechanism, and "
-              "the test now checks the pinned levels only.", "",
-            "**This is what makes the attribution result conditional rather "
-            "than general.** A more repeatable attribution statistic is more "
-            "likely to pin a sensor across every resample, so the property "
-            "that earns it +13.0 points of selection stability is the same "
-            "property that saturates its null max-statistic. Whether the swap "
-            "helps or hurts therefore depends entirely on whether the "
-            "selection depth is narrow enough to keep saturation rare. That is "
-            "not a caveat bolted onto the result; it is the result.", "",
+            f"**The coincidence this explains.** "
+            f"{lab.replace('`', '').replace('**', '')} reports exactly "
+            f"{ctl:.6f} control at both alpha = {a1} and alpha = {a2}, even "
+            f"though the smallest threshold its splits fitted differs between "
+            f"them ({t1:.3f} against {t2:.3f}). The earlier text read that as "
+            f"the threshold pinning at 1.000 in both cases, which the "
+            f"`tau_min` column above shows is false. The real reason is the "
+            f"grid: with `n_boot` = 12 the null max has an atom at 1.000 and "
+            f"nothing between 11/12 = 0.917 and 1.000, so **every** threshold "
+            f"in that gap selects exactly the same replicates and returns "
+            f"exactly the same control. Alpha moves the threshold within a "
+            f"gap without moving the answer.", "",
+            "So the alpha-invariance is real but local, and the earlier "
+            "phrase \"with no dependence on alpha at all\" was wrong: whether "
+            "two levels agree depends on whether their thresholds land in the "
+            "same gap, which is entirely a question of alpha.", "",
         ]
-    else:
-        body += [
-            "No arm in this table has a binding cap, so error control here is "
-            "limited by the calibration rather than by saturation.", "",
-        ]
+    body += [
+        "**And P(M = 1) is not a property of the rule.** It depends on the "
+        "bootstrap count, the selection depth, the attribution statistic, the "
+        "candidate-pool size and the null construction -- changing `select_k` "
+        "alone moves it across the arms above. The rule supplies the step "
+        "structure; the experiment decides where the steps fall. Claims here "
+        "are therefore about these arms under this protocol, not about "
+        "stability selection in general.", "",
+        "What this does leave intact is the practical coupling. A more "
+        "repeatable attribution statistic pins a sensor across more resamples, "
+        "which raises P(M = 1) and pushes the top of the attainable set down; "
+        "a narrower selection depth lowers it again. That is why the same "
+        "one-field attribution swap improves error control at `select_k` = 5 "
+        "and degrades it at `select_k` = 40, and it is the reason "
+        "recommendation 3 asks for both fields together.", "",
+        table(rows, ["arm", "alpha", "smallest tau fitted", "largest tau fitted",
+                     "measured control", "nominal"]), "",
+    ]
     return body
 
 
@@ -2614,11 +2725,12 @@ def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None,
                     f"{pct(pp40['null_abstention_heldout'])} to "
                     f"{pct(mm40['null_abstention_heldout'])} "
                     f"({d40:+.1f} points)"
-                    + (f", because a more repeatable statistic saturates the "
-                       f"null max-statistic -- {pct(sat)} of null replicates "
-                       f"pin at 1.000 there, which caps control at "
-                       f"{pct(1 - sat)} for any threshold rule of this form "
-                       f"regardless of alpha (see the ceiling section above)"
+                    + (f", because a more repeatable statistic pins a sensor "
+                       f"in every resample more often -- {pct(sat)} of null "
+                       f"replicates reach support 1.000 there, and the "
+                       f"attainable control values above {pct(1 - sat)} drop "
+                       f"out of the grid entirely (see \"What error control is "
+                       f"achievable at all\")"
                        if sat is not None else "")
                     + f". So the change to make is *both* fields together: "
                       f"`attribution=\"model\"` **and** a depth narrow "
@@ -2627,8 +2739,10 @@ def sec_recommend(ev, ab, rk, ab5=None, st=None, ab5m=None,
         item += (
             " Neither number reaches its target and the machinery around the "
             "statistic still buys nothing measurable"
-            + (" -- and the conditionality above is not a footnote, it is why "
-               "this is item 3 rather than item 1."
+            + (" on accuracy: the sparsity sweep shows its apparent +0.012 "
+               "AUC edge was the extra sensors, not the ranking. And the "
+               "conditionality above is not a footnote, it is why this is "
+               "item 3 rather than item 1."
                if flipped else
                " -- but if the loop is kept, this is the change to make, and "
                "it costs a config edit."))
@@ -2802,6 +2916,7 @@ def build(runs: Path):
     ab5 = read_json(runs / "abstain_k5.json")
     nf5 = read_json(runs / "null_fdr_k5.json")
     aa = read_json(runs / "attr_arm.json")
+    sp = read_json(runs / "sparsity.json")
     ab5m = read_json(runs / "abstain_k5_model.json")
     nf5m = read_json(runs / "null_fdr_k5_model.json")
     abm = read_json(runs / "abstain_model.json")
@@ -2811,6 +2926,7 @@ def build(runs: Path):
     L += sec_dataset(prof)
     L += sec_secom_auc(ev)
     L += sec_attr_auc(aa, ev)
+    L += sec_sparsity(sp)
     L += sec_rolling(ev, prof)
     L += sec_drift(dr)
     L += sec_rolling_sweep(rsw, ev)

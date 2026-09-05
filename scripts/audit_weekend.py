@@ -270,6 +270,23 @@ def claims(d):
                 ]
         out.append(("H7 n_selected", "attr_arm",
                     f"{aa['n_selected_mean']:.1f}"))
+    sp = d.get("sparsity")
+    if sp:
+        for k in sp["caps"]:
+            pm = sp["curves"]["permutation"][str(k)]
+            mm = sp["curves"]["model"][str(k)]
+            dd = sp["per_rung"][str(k)]["model_minus_permutation"]
+            out += [
+                (f"sparsity perm AUC cap {k}", "sparsity",
+                 f"{pm['auc']['mean']:.4f}"),
+                (f"sparsity model AUC cap {k}", "sparsity",
+                 f"{mm['auc']['mean']:.4f}"),
+                (f"sparsity delta cap {k}", "sparsity", f"{dd['mean']:+.4f}"),
+            ]
+        sl = (sp.get("sparsity_slope") or {}).get("model")
+        if sl:
+            out.append(("sparsity slope", "sparsity",
+                        f"{sl['auc_per_sensor']:+.5f}"))
     pf = d.get("par_few")
     if pf:
         u = pf["per_arm"]["par_untuned"]["auc"]
@@ -312,7 +329,7 @@ def main():
              "abstain", "abstain_k5", "null_fdr_rankers", "invariance",
              "null_fdr_k5_model", "abstain_k5_model",
              "null_fdr_model", "abstain_model",
-             "attr_arm", "par_few"]
+             "attr_arm", "par_few", "sparsity"]
     d = {n: load(runs, n) for n in names}
     missing = [n for n in names if d[n] is None]
 

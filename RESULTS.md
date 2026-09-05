@@ -92,11 +92,36 @@ One arm added under the published protocol -- `agent_model_rf`, the pre-register
 
 **The deficit against the full-sensor forest shrinks but does not close:** -0.042 for the permutation loop, -0.030 [-0.047, -0.013] here, with the interval still excluding zero. And the arm now sits on top of the naive-selection control: -0.0009 [-0.0146, +0.0129], Wilcoxon p = 0.71 -- indistinguishable from ranking each sensor on its own and keeping the top 25.
 
-That is the decomposition the accuracy question needed. The loop's -0.042 splits into roughly +0.0116 of *recoverable ranking quality* and -0.030 of *irreducible sparsity price* -- the latter being what any method paying for a 25-sensor budget owes on a dataset whose signal is spread thin. Swapping the statistic collects the first part and cannot touch the second. **So the loop's accuracy deficit is not fixable by any attribution statistic**, which was registered as the prediction and is a worse result for the architecture than the alternative would have been: under the competing explanation the deficit was bad ranking and therefore repairable.
+**So the loop's accuracy deficit is not fixable by any attribution statistic**, which was registered as the prediction and is a worse result for the architecture than the alternative would have been: under the competing explanation the deficit was bad ranking and therefore repairable.
+
+*A decomposition that stood here has been withdrawn.* This section originally split the -0.042 into roughly +0.0116 of recoverable ranking quality plus -0.030 of sparsity price. The sparsity sweep in the next section shows the first term is not there: at matched selected-set size the two attribution statistics are indistinguishable, and the +0.0116 was the extra sensors. The conclusion in bold above is unchanged and is in fact strengthened -- the deficit is sparsity price in full.
 
 **Two reasons not to bank the +0.0116 gain over the permutation loop, both of which cut the same way.** Its interval is [-0.0006, +0.0237] and its Wilcoxon p is 0.071, so it is not established at the 0.05 level. And it is not a sparsity-matched comparison: this arm selects 25.0 sensors per fold against the permutation loop's 19.8, which is its `max_select` cap of 25 exactly -- the arm is pinned against its own budget and would have taken more. Selection costs AUC monotonically on this dataset, so part of the gain is simply less sparsity rather than better ranking. Both caveats shrink the ranking-quality share of the deficit, which makes the sparsity explanation stronger rather than weaker.
 
 The registered distrust check passes for the reason it was written: an arm that reached the baseline by quietly abandoning selection would be uninteresting, and this one stayed sparse.
+
+### Is the attribution effect on AUC a sparsity artifact? (H8)
+
+The H7 comparison was confounded: the model-native arm selected 25.0 sensors per fold against 19.8, and 25.0 was its `max_select` cap exactly, so it was pinned at its budget. This sweeps that cap for **both** attribution statistics under the headline 25-fold protocol, changing nothing else from the pre-registered operating point, so the two can be compared at matched selected-set size rather than at matched configuration.
+
+| `max_select` | perm AUC | perm n | model AUC | model n | n gap | model - perm (paired) |
+|---|---|---|---|---|---|---|
+| 5 | 0.6865 | 5.0 | 0.6843 | 5.0 | +0.0 | -0.0022 [-0.0237, +0.0193] |
+| 10 | 0.7045 | 9.9 | 0.7015 | 10.0 | +0.1 | -0.0031 [-0.0224, +0.0162] |
+| 15 | 0.7146 | 14.5 | 0.7193 | 15.0 | +0.5 | +0.0046 [-0.0099, +0.0192] |
+| 20 | 0.7193 | 17.9 | 0.7256 | 20.0 | +2.1 | +0.0064 [-0.0067, +0.0194] |
+| 25 | 0.7172 | 19.8 | 0.7288 | 25.0 | +5.1 | +0.0116 [-0.0006, +0.0237] |
+| 40 | 0.7199 | 21.8 | 0.7368 | 32.1 | +10.3 | +0.0168 [+0.0055, +0.0282] |
+
+**The apparent attribution advantage tracks the sparsity gap and vanishes when the gap does.** Across the ladder the correlation between the selected-set gap and the paired AUC difference is r = 0.924. At the rungs where both arms take the same number of sensors (`max_select` = 5, gap +0.0), (`max_select` = 10, gap +0.1) the difference is -0.0022 and -0.0031 -- **negative**, and the pre-registered sign count is therefore 0 of 1 strictly matched rungs.
+
+**H8 is refuted.** It predicted the model curve would sit above the permutation curve at matched size by +0.005 to +0.020; it sits fractionally below. The competing explanation -- that the whole +0.0116 was the extra 5.2 sensors -- is what the data support.
+
+The mechanism is quantitative. Over the range where the cap binds (5 to 20 sensors) each additional sensor is worth +0.00284 AUC, so the 5.1-sensor gap at `max_select` = 25 predicts +0.0145 against the +0.0116 observed. Sparsity alone accounts for the effect; nothing needs to be attributed to the ranking.
+
+**So the H7 decomposition was wrong and is withdrawn.** That section split the loop's -0.042 AUC deficit into roughly +0.012 of recoverable ranking quality and -0.030 of irreducible sparsity price. The recoverable term is not there: at matched sparsity the two statistics are indistinguishable, so **the deficit is sparsity price essentially in full**. The attribution statistic is worth 13 points of selection stability and, at a suitable depth, 2.2 points of error control -- and nothing at all on accuracy.
+
+This also settles which of two things this repository said about the same number was right. The caveat attached to H7 -- read +0.012 as an upper bound, not an estimate -- was correct. The reasoning used the following turn to argue the effect would survive matching, which leaned on a dominance relation in `runs/secom_loop_sweep.json`, was not: those sweep arms differ in `select_k` and `stability_min` as well as in sparsity, and that was noted at the time and then not acted on.
 
 ## Does it survive going forward in time?
 
@@ -423,30 +448,49 @@ Swapping the statistic closes most of the error-control gap -- +0.6 points remai
 
 So the conclusion narrows rather than reverses. The loop still does not *beat* a univariate ranker on any axis measured here. But the claim that it is comprehensively worse was resting on a configuration whose attribution statistic was the weakest part of it, and with that one field changed two of the three gaps are small. What the loop buys for the remaining cost is still nothing measurable, which is the finding; what it costs is now much less than the pre-registered operating point suggested.
 
-## The ceiling on any max-support threshold rule
+## What error control is achievable at all
 
-Three findings in this repository are the same mechanism, and once stated as an identity it predicts rather than describes. Bootstrap selection frequency cannot exceed 1, so if some sensor is selected in *every* resample of a null replicate, that replicate's max-statistic is exactly 1.000 -- and no threshold at or below 1.000 excludes it. The error control reachable by any rule of this form is therefore capped at **1 - P(a null replicate saturates)**, with no dependence on alpha at all.
+A suspect's bootstrap support is a count over `n_boot` resamples divided by `n_boot`, so the null max-statistic *M* lives on the grid {0, 1/`n_boot`, ..., 1}. Error control as a function of the threshold is therefore a **step function**, and only `n_boot` + 1 values of it are attainable no matter how alpha is chosen:
 
-| arm | alpha | P(null saturates) | implied cap | tau fitted | measured control | nominal |
-|---|---|---|---|---|---|---|
-| agent, `select_k = 40`, permutation | 0.1 | 1.5% | 98.5% | 0.842 | 82.0% | 90.0% |
-| agent, `select_k = 40`, permutation | 0.05 | 1.5% | 98.5% | 0.910 | 91.6% | 95.0% |
-| agent, `select_k = 40`, permutation | 0.01 | 1.5% | 98.5% | 0.959 | 97.7% | 99.0% |
-| agent, `select_k = 40`, **model** | 0.1 | 12.0% | 88.0% | 0.980 | 84.6% | 90.0% |
-| agent, `select_k = 40`, **model** | 0.05 | 12.0% | 88.0% | 1.000 **(pinned)** | 88.0% | 95.0% |
-| agent, `select_k = 40`, **model** | 0.01 | 12.0% | 88.0% | 1.000 **(pinned)** | 88.0% | 99.0% |
-| agent, `select_k = 5`, permutation | 0.1 | 0.0% | 100.0% | 0.399 | 84.8% | 90.0% |
-| agent, `select_k = 5`, permutation | 0.05 | 0.0% | 100.0% | 0.439 | 91.5% | 95.0% |
-| agent, `select_k = 5`, permutation | 0.01 | 0.0% | 100.0% | 0.498 | 97.5% | 99.0% |
-| agent, `select_k = 5`, **model** | 0.1 | 0.5% | 99.5% | 0.614 | 85.8% | 90.0% |
-| agent, `select_k = 5`, **model** | 0.05 | 0.5% | 99.5% | 0.728 | 93.7% | 95.0% |
-| agent, `select_k = 5`, **model** | 0.01 | 0.5% | 99.5% | 0.850 | 98.2% | 99.0% |
+> attainable control = { 1 - P(M >= k / `n_boot`) : k = 1 .. `n_boot` }
 
-The cap is an upper bound everywhere, and it is **attained** exactly where the fitted threshold has itself pinned at the top of the support scale: agent, select_k = 40, model at alpha = 0.05 caps at 88.0% and measures 88.0%; agent, select_k = 40, model at alpha = 0.01 caps at 88.0% and measures 88.0%. The signature is unmistakable in those rows: they report the *same* control at alpha = 0.05 and alpha = 0.01, because once tau sits at 1.000, tightening alpha cannot move it.
+Two things follow, and they are worth separating because only the second is interesting.
 
-The rows where tau is *not* pinned are what make the mechanism precise rather than approximate, and they are worth reading before quoting the cap as a prediction. Control is 1 - P(null max >= tau), so a tau below 1.000 admits the null replicates whose maximum lands in [tau, 1.000) and control comes in *below* the cap rather than at it -- agent, select_k = 40, model at alpha = 0.1 fits tau = 0.980 and controls at 84.6% against a 88.0% ceiling. The cap therefore says what is unreachable, not what will be reached. A first version of the test guarding this section asserted alpha-invariance at every level and failed on exactly that row; the assertion was stronger than the mechanism, and the test now checks the pinned levels only.
+**The trivial one.** The largest attainable value is 1 - P(M = 1), because the fitted threshold is a quantile of a statistic bounded by 1 and the rule reports when support >= tau. That is a one-line consequence of boundedness and the comparison operator, not a finding, and an earlier version of this section oversold it as an identity that predicts. It also is not a property of max-support thresholding in general: a rule comparing with a strict `>` at 1, or thresholding something unbounded, escapes it entirely.
 
-**This is what makes the attribution result conditional rather than general.** A more repeatable attribution statistic is more likely to pin a sensor across every resample, so the property that earns it +13.0 points of selection stability is the same property that saturates its null max-statistic. Whether the swap helps or hurts therefore depends entirely on whether the selection depth is narrow enough to keep saturation rare. That is not a caveat bolted onto the result; it is the result.
+**The one that matters.** The attainable *set* is coarse, and its spacing is set by `n_boot` rather than by anything statistical:
+
+| arm | `n_boot` | P(M = 1) | attainable control above 0.60 | closest attainable to 0.95 |
+|---|---|---|---|---|
+| agent, `select_k = 40`, permutation | 12 | 1.5% | 0.985, 0.920, 0.790 | 0.920 (-0.030) |
+| agent, `select_k = 40`, **model** | 12 | 12.0% | 0.880, 0.645 | 0.880 (-0.070) |
+| agent, `select_k = 5`, permutation | 12 | 0.0% | 1.000, 0.995, 0.955, 0.875, 0.625 | 0.955 (+0.005) |
+| agent, `select_k = 5`, **model** | 12 | 0.5% | 0.995, 0.990, 0.965, 0.935, 0.905, 0.805, 0.655 | 0.935 (-0.015) |
+
+**No arm can land on 0.95 exactly**, because 0.95 is not in any of these sets -- the misses are a property of the grid rather than of the calibration. For the worst arm the entire attainable set above 0.60 is a single value. This is a resolution limit, and the parameter that sets it is `n_boot`, which no part of this repository had previously identified as governing error control at all.
+
+**The coincidence this explains.** agent, select_k = 40, model reports exactly 0.880000 control at both alpha = 0.05 and alpha = 0.01, even though the smallest threshold its splits fitted differs between them (0.921 against 1.000). The earlier text read that as the threshold pinning at 1.000 in both cases, which the `tau_min` column above shows is false. The real reason is the grid: with `n_boot` = 12 the null max has an atom at 1.000 and nothing between 11/12 = 0.917 and 1.000, so **every** threshold in that gap selects exactly the same replicates and returns exactly the same control. Alpha moves the threshold within a gap without moving the answer.
+
+So the alpha-invariance is real but local, and the earlier phrase "with no dependence on alpha at all" was wrong: whether two levels agree depends on whether their thresholds land in the same gap, which is entirely a question of alpha.
+
+**And P(M = 1) is not a property of the rule.** It depends on the bootstrap count, the selection depth, the attribution statistic, the candidate-pool size and the null construction -- changing `select_k` alone moves it across the arms above. The rule supplies the step structure; the experiment decides where the steps fall. Claims here are therefore about these arms under this protocol, not about stability selection in general.
+
+What this does leave intact is the practical coupling. A more repeatable attribution statistic pins a sensor across more resamples, which raises P(M = 1) and pushes the top of the attainable set down; a narrower selection depth lowers it again. That is why the same one-field attribution swap improves error control at `select_k` = 5 and degrades it at `select_k` = 40, and it is the reason recommendation 3 asks for both fields together.
+
+| arm | alpha | smallest tau fitted | largest tau fitted | measured control | nominal |
+|---|---|---|---|---|---|
+| agent, `select_k = 40`, permutation | 0.1 | 0.833 | 0.917 | 82.0% | 90.0% |
+| agent, `select_k = 40`, permutation | 0.05 | 0.833 | 0.917 | 91.6% | 95.0% |
+| agent, `select_k = 40`, permutation | 0.01 | 0.917 | 1.000 | 97.7% | 99.0% |
+| agent, `select_k = 40`, **model** | 0.1 | 0.917 | 1.000 | 84.6% | 90.0% |
+| agent, `select_k = 40`, **model** | 0.05 | 0.921 | 1.000 | 88.0% | 95.0% |
+| agent, `select_k = 40`, **model** | 0.01 | 1.000 | 1.000 | 88.0% | 99.0% |
+| agent, `select_k = 5`, permutation | 0.1 | 0.333 | 0.417 | 84.8% | 90.0% |
+| agent, `select_k = 5`, permutation | 0.05 | 0.417 | 0.500 | 91.5% | 95.0% |
+| agent, `select_k = 5`, permutation | 0.01 | 0.417 | 0.501 | 97.5% | 99.0% |
+| agent, `select_k = 5`, **model** | 0.1 | 0.508 | 0.750 | 85.8% | 90.0% |
+| agent, `select_k = 5`, **model** | 0.05 | 0.583 | 0.833 | 93.7% | 95.0% |
+| agent, `select_k = 5`, **model** | 0.01 | 0.668 | 0.918 | 98.2% | 99.0% |
 
 ## Are the suspects causal, or only associated?
 
@@ -524,7 +568,7 @@ The measurements point at one configuration, and it is not the one that scores b
 
 1. **Predict with every sensor -- with one asterisk.** Under the shuffled protocol selection costs AUC monotonically, because the signal is diffuse, so `rf_all` at 0.759 is the model to deploy. The asterisk is that forward in time the ordering reverses and the sparse arms come out ahead; that comparison has 4 origins behind it and its interval includes zero, so it is a reason to monitor and re-measure as wafers accumulate, not a reason to ship the sparse model today.
 2. **Do not ship the suspect list without a null-calibrated bar.** As it stands the loop reports 20.9 suspects and abstains on nothing, and on permuted labels it does the same -- so the list length carries no information about the process. `AgentRCA(report_tau=...)` fixes that: at alpha = 0.05 the report becomes 0.60 sensors and is empty 51.3% of the time. Prediction is untouched either way, so this costs no AUC.
-3. **Change the attribution statistic first -- it is one field and it moves more than anything else measured here.** Setting `attribution="model"` instead of held-out permutation importance raises top-5 selection stability from 22.3% to 35.3% (+13.0 points) and cuts the loop's runtime 2.8x (40.3 min to 14.6 min). At `select_k = 5` it also improves null error control from 91.5% to 93.7% while reporting *more* suspects (1.16 to 1.34), so it is not buying control by saying less. **But only at a narrow selection depth.** Run the same swap at the pre-registered `select_k = 40` and error control goes the other way, 91.6% to 88.0% (-3.6 points), because a more repeatable statistic saturates the null max-statistic -- 12.0% of null replicates pin at 1.000 there, which caps control at 88.0% for any threshold rule of this form regardless of alpha (see the ceiling section above). So the change to make is *both* fields together: `attribution="model"` **and** a depth narrow enough to keep saturation rare. One without the other is a regression. Neither number reaches its target and the machinery around the statistic still buys nothing measurable -- and the conditionality above is not a footnote, it is why this is item 3 rather than item 1.
+3. **Change the attribution statistic first -- it is one field and it moves more than anything else measured here.** Setting `attribution="model"` instead of held-out permutation importance raises top-5 selection stability from 22.3% to 35.3% (+13.0 points) and cuts the loop's runtime 2.8x (40.3 min to 14.6 min). At `select_k = 5` it also improves null error control from 91.5% to 93.7% while reporting *more* suspects (1.16 to 1.34), so it is not buying control by saying less. **But only at a narrow selection depth.** Run the same swap at the pre-registered `select_k = 40` and error control goes the other way, 91.6% to 88.0% (-3.6 points), because a more repeatable statistic pins a sensor in every resample more often -- 12.0% of null replicates reach support 1.000 there, and the attainable control values above 88.0% drop out of the grid entirely (see "What error control is achievable at all"). So the change to make is *both* fields together: `attribution="model"` **and** a depth narrow enough to keep saturation rare. One without the other is a regression. Neither number reaches its target and the machinery around the statistic still buys nothing measurable on accuracy: the sparsity sweep shows its apparent +0.012 AUC edge was the extra sensors, not the ranking. And the conditionality above is not a footnote, it is why this is item 3 rather than item 1.
 4. **Consider replacing the ranking core with a univariate ranker.** `univariate (n_boot=40, select_k=5)` reaches 94.3% error control against the loop's 91.6% and reports 2.06 suspects against 0.60, without a permutation-importance pass, a correlation-grouping step or a verification loop. Two caveats on that comparison are in the section above -- the depth was probed for the baseline, and the separation column rewards repeatability -- so read this as the strongest available reason to try the swap and measure, not as a settled result.
 5. **Selection depth is not the lever here.** Dropping the loop's `select_k` from 40 to 5 moved its error control by -0.0 points on its own, so for this loop, holding the attribution statistic fixed, depth is not the lever it is for a univariate ranker. It is not inert, though, and item 3 is why: depth is what decides whether the attribution swap is a gain or a regression, by setting how often the null max-statistic saturates. Depth alone buys nothing; depth is the precondition for the thing that does.
 6. **Believe the forward-in-time split, not the shuffled one.** For a go/no-go decision the shuffled-CV number is the optimistic one, and the drift diagnostics say why: era is far more predictable from these sensors than failure is. Plan on retraining, and treat any fixed model as having a shelf life measured in weeks.
