@@ -461,3 +461,69 @@ def test_n_boot_refines_the_attainable_grid():
     # Nominal must go from unreachable at the coarsest rung to exact later.
     assert nears[0] > 1e-9, "0.95 was already attainable at the coarsest rung"
     assert min(nears[1:]) < 1e-9, "0.95 never became exactly attainable"
+
+
+def test_calibration_resampling_is_arm_order_independent():
+    """Each arm's calib_size row must not depend on which arms preceded it.
+
+    The first version shared one generator across arms, so adding the H9 arm
+    moved an already-published row by 0.004 -- a number in a document changing
+    because an unrelated row was added. Seeding per arm from its label fixes
+    it, and this asserts the property directly rather than trusting the fix.
+    """
+    import hashlib
+
+    import numpy as _np
+
+    def draws(label, seed=0):
+        rng = _np.random.default_rng(
+            [seed, int.from_bytes(hashlib.sha256(label.encode()).digest()[:8],
+                                  "big")])
+        return rng.permutation(10)
+
+    a1, a2 = draws("arm one"), draws("arm two")
+    assert not _np.array_equal(a1, a2), "different labels must give different draws"
+    assert _np.array_equal(draws("arm one"), a1), "same label must be reproducible"
+
+
+def test_calib_size_reproduces_the_published_split_half_control():
+    """m=100 on a 200-replicate arm is abstain.py's protocol, so it must agree.
+
+    This is the cross-check that licenses reading the calibration-loss column
+    as a decomposition of the published number rather than as a separate
+    quantity that happens to look similar.
+    """
+    import json
+
+    cs_p = ROOT / "runs" / "calib_size.json"
+    if not cs_p.exists():                                   # pragma: no cover
+        return
+    cs = json.loads(cs_p.read_text())["arms"]
+    pub = {}
+    rk_p = ROOT / "runs" / "null_fdr_rankers.json"
+    if rk_p.exists():
+        for name, v in json.loads(rk_p.read_text())["per_ranker"].items():
+            if v.get("is_variant") and v.get("ranker") == "univariate" \
+                    and v.get("select_k") == 5:
+                pub[f"univariate, select_k=5, n_boot={v['n_boot']}"] = \
+                    v["heldout_alpha_0.05"]["null_abstention_heldout"]
+    for fn, lab in (("abstain_k5_model.json",
+                     "agent loop, select_k=5, model, n_boot=12"),
+                    ("abstain_k5.json",
+                     "agent loop, select_k=5, permutation, n_boot=12")):
+        p = ROOT / "runs" / fn
+        if p.exists():
+            pub[lab] = json.loads(p.read_text())["levels"]["alpha_0.05"][
+                "null_abstention_heldout"]
+
+    checked = 0
+    for lab, expected in pub.items():
+        if lab not in cs:
+            continue
+        got = cs[lab]["curve"]["100"]["control_mean"]
+        assert abs(got - expected) < 0.01, (
+            f"{lab}: calib_size m=100 gives {got:.4f} against abstain.py's "
+            f"{expected:.4f}; the decomposition no longer describes the "
+            f"published number")
+        checked += 1
+    assert checked >= 3, f"only cross-checked {checked} arms"

@@ -2043,6 +2043,120 @@ def sec_sparsity(sp):
     return body
 
 
+def sec_calib_size(cs, nfm40=None, abm40=None, ab5m=None):
+    """Split the gap to nominal into a grid term and a calibration term.
+
+    Once `n_boot` is large enough for the grid to contain a nominal level, what
+    is left between nominal and delivered? This resamples the per-replicate
+    null statistics already recorded -- no model is fitted -- to separate the
+    resolution of the attainable set from the noise in estimating tau from a
+    finite null.
+    """
+    if not cs:
+        return []
+    arms = cs.get("arms") or {}
+    if not arms:
+        return []
+    nom = cs["protocol"]["nominal"]
+    sizes = cs["sizes"]
+    body = []
+
+    # --- H9 first: the agent loop's own n_boot pair ---
+    if nfm40 and abm40 and ab5m:
+        import numpy as np
+        rows = []
+        for lab, nf_, ab_ in (("`n_boot` = 12 (pre-registered)", None, ab5m),
+                              ("`n_boot` = 40", nfm40, abm40)):
+            m = ab_["levels"]["alpha_0.05"]
+            key = ("agent loop, select_k=5, model, n_boot="
+                   + ("40" if nf_ else "12"))
+            a = arms.get(key, {})
+            rows.append([lab, pct(a.get("p_saturated", float("nan"))),
+                         str(len(a.get("attainable_above_060", []))),
+                         f"{a.get('oracle_control', float('nan')):.4f}",
+                         pct(m["null_abstention_heldout"]),
+                         f"{m['real_reported_mean']:.2f}"])
+        body += [
+            "### Does a finer grid reach nominal? (H9)", "",
+            "The grid account predicts that raising `n_boot` refines the "
+            "attainable set. Registered before the run: the refinement brings "
+            "a value within 0.01 of 0.95, and measured control improves on "
+            "93.7%. Also registered was the competing possibility that "
+            "P(M = 1) would *rise* with more resamples and push the top of the "
+            "set back down, in which case the advice would have inverted to "
+            "fewer resamples. Agent loop, `select_k = 5`, model attribution, "
+            "`n_boot` the only change:", "",
+            table(rows, ["arm", "P(M = 1)", "attainable above 0.60",
+                         "best attainable (oracle)", "measured control",
+                         "suspects"]), "",
+            "**H9 holds on both halves, and the competing mechanism is "
+            "refuted rather than merely absent.** P(M = 1) *fell* from 0.5% to "
+            "0.0%: with more resamples a noisy sensor gets more chances to be "
+            "missed, and that dominates the averaging effect that would have "
+            "pushed it the other way. So the two terms do not trade off here "
+            "-- the finer grid is a free improvement, and the report gets "
+            "longer rather than shorter while control improves.", "",
+            "**What does not change is the comparison that carries the "
+            "conclusion.** The univariate arm at the same `n_boot` = 40 and "
+            "the same depth reaches 94.3% control while reporting 2.06 "
+            "suspects. The loop reaches 94.2% reporting 1.55. Tuning `n_boot` "
+            "moved the loop from clearly behind on error control to level on "
+            "it, and left it behind on report length. The headline is "
+            "unaffected.", "",
+        ]
+
+    # --- the decomposition ---
+    rows = []
+    for lab, a in arms.items():
+        m100 = (a["curve"].get("100") or {})
+        rows.append([lab, str(a["n_boot"]),
+                     f"{a['oracle_control']:.3f}",
+                     f"{a['grid_gap']:+.3f}",
+                     f"{m100.get('control_mean', float('nan')):.3f}",
+                     f"{m100.get('calibration_loss', float('nan')):+.3f}"])
+    body += [
+        "### Grid or calibration? Splitting the gap to nominal", "",
+        f"With `n_boot` fixed, the distance between nominal {nom:.2f} and what "
+        f"the pipeline delivers has two sources: the **grid** may not contain "
+        f"a value at nominal, and the **calibration** estimates tau from a "
+        f"finite null. This separates them by resampling the per-replicate "
+        f"statistics already recorded -- no model is fitted anywhere in this "
+        f"section. The *oracle* is the attainable value closest to nominal, "
+        f"i.e. what an infinite calibration set would deliver; *measured* fits "
+        f"tau on 100 null replicates and scores the held-out remainder, which "
+        f"is `scripts/abstain.py`'s protocol.", "",
+        table(rows, ["arm", "`n_boot`", "oracle", "grid gap",
+                     "measured (m = 100)", "calibration loss"]), "",
+        "Read the last two columns as the answer to *what should I spend on*. "
+        "Where the grid gap is non-zero, more bootstrap resamples; where the "
+        "calibration loss dominates, more null replicates. The two are "
+        "different budgets and this repository had been conflating them under "
+        "\"the calibration is imperfect\".", "",
+    ]
+    # how the calibration loss shrinks with the null size
+    a40 = arms.get("agent loop, select_k=5, model, n_boot=40")
+    if a40:
+        crows = [[str(m), f"{a40['curve'][str(m)]['control_mean']:.3f}",
+                  f"{a40['curve'][str(m)]['control_sd']:.3f}",
+                  f"{a40['curve'][str(m)]['calibration_loss']:+.3f}"]
+                 for m in sizes if str(m) in a40["curve"]]
+        body += [
+            "And how fast the calibration term shrinks, for the arm H9 "
+            "produced (agent loop, `select_k = 5`, model, `n_boot` = 40, "
+            f"oracle {a40['oracle_control']:.3f}):", "",
+            table(crows, ["null replicates used to fit tau", "control",
+                          "sd over draws", "calibration loss"]), "",
+            "The loss roughly halves from 25 to 50 replicates and again to "
+            "100, then stops. At 200 null replicates -- what these runs use -- "
+            "the split-half protocol fits tau on 100, which is where the curve "
+            "flattens, so **the remaining gap to nominal is not something more "
+            "null replicates would close cheaply.** That is a more useful "
+            "statement than the raw shortfall, and it is only visible once the "
+            "two terms are separated.", "",
+        ]
+    return body
+
+
 def sec_nboot_grid(rk):
     """Does raising `n_boot` refine the attainable set? Measured, at no cost.
 
@@ -3006,6 +3120,9 @@ def build(runs: Path):
     nf5 = read_json(runs / "null_fdr_k5.json")
     aa = read_json(runs / "attr_arm.json")
     sp = read_json(runs / "sparsity.json")
+    cs = read_json(runs / "calib_size.json")
+    nfm40 = read_json(runs / "null_fdr_k5_model_b40.json")
+    abm40 = read_json(runs / "abstain_k5_model_b40.json")
     ab5m = read_json(runs / "abstain_k5_model.json")
     nf5m = read_json(runs / "null_fdr_k5_model.json")
     abm = read_json(runs / "abstain_model.json")
@@ -3027,6 +3144,7 @@ def build(runs: Path):
     L += sec_depth(ab, ab5, rk, nf, nf5)
     L += sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk)
     L += sec_nboot_grid(rk)
+    L += sec_calib_size(cs, nfm40, abm40, ab5m)
     L += sec_saturation([
         ("agent, `select_k = 40`, permutation", nf, ab),
         ("agent, `select_k = 40`, **model**", nfm, abm),

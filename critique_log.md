@@ -1882,3 +1882,103 @@ day, and the reason it was available is that `null_fdr_rankers.py` recorded
 per-replicate `max_stability` rather than only summaries. The habit of storing
 per-replicate records instead of aggregates is what made a free confirmation
 possible, and that is worth more than the confirmation.
+
+---
+
+## Turn 14 (2026-09-05) — H9 confirmed, and the gap to nominal splits in two
+
+### H9 verdict: confirmed on both halves, competing mechanism refuted
+
+`null_fdr.py --select-k 5 --attribution model --n-boot 40`, 240 fits, 49.8 min
+→ `runs/null_fdr_k5_model_b40.json`, priced by the same split-half calibration.
+
+| agent loop, `select_k = 5`, model | `n_boot` = 12 | `n_boot` = 40 |
+|---|---|---|
+| P(M = 1) | 0.5% | **0.0%** |
+| attainable values above 0.60 | 7 | **19** |
+| best attainable (oracle) | 0.9350 | **0.9550** |
+| measured control, alpha = 0.05 | 93.7% | **94.2%** |
+| suspects reported | 1.34 | **1.55** |
+| separation | 0.994 | **1.000** |
+
+Registered prediction: an attainable value within 0.01 of 0.95, and measured
+control above 93.7%. Delivered 0.9550 (0.005 away) and 94.2%. **Both halves
+hold.**
+
+The part worth more than the confirmation is the competing mechanism. I had
+written that P(M = 1) might *rise* with more resamples — a sensor selected in
+12/12 might also be selected in 40/40, pushing the top of the attainable set
+down even as spacing improved — and that if so the advice would invert to
+*fewer* resamples. **It fell, 0.5% to 0.0%.** More resamples give a noisy
+sensor more chances to be missed, and that dominates the averaging effect. So
+the two terms do not trade off here and the finer grid is free: control up,
+report *longer* (1.34 → 1.55), separation to 1.000.
+
+**And the headline does not move.** The univariate arm at the same `n_boot` and
+depth reaches 94.3% control on 2.06 suspects; the loop reaches 94.2% on 1.55.
+Tuning `n_boot` took the loop from behind on error control to level on it, and
+left it behind on report length. Three parameters have now been tuned in the
+loop's favour — attribution, depth, bootstrap count — and on no axis does it
+end up ahead of ranking each sensor on its own.
+
+### The decomposition, at zero compute
+
+Once the grid contains a nominal value, what is the rest of the gap? Answered by
+resampling the per-replicate statistics already on disk (`scripts/calib_size.py`,
+no model fits):
+
+    gap to nominal = (nominal - oracle)   grid resolution
+                   + (oracle - measured)  calibration noise
+
+| arm | `n_boot` | oracle | grid gap | measured (m=100) | calibration loss |
+|---|---|---|---|---|---|
+| univariate, `select_k=5` | 12 | 0.960 | -0.010 | 0.930 | **+0.030** |
+| univariate, `select_k=5` | 40 | 0.950 | +0.000 | 0.942 | +0.008 |
+| univariate, `select_k=5` | 100 | 0.950 | +0.000 | 0.941 | +0.009 |
+| agent, model | 12 | 0.935 | **+0.015** | 0.937 | -0.002 |
+| agent, model | 40 | 0.955 | -0.005 | 0.942 | +0.013 |
+| agent, permutation | 12 | 0.955 | -0.005 | 0.916 | **+0.039** |
+
+The two columns answer different questions and this repository had been
+conflating them under "the calibration is imperfect". At `n_boot` = 12 with
+model attribution the grid is the binding term (+0.015) and the calibration is
+already essentially exact. With permutation attribution at the same `n_boot` the
+grid is *fine* (-0.005) and the calibration loses 0.039 — a noisier statistic
+makes tau harder to estimate, which is a third cost of the permutation
+estimator that the repo had not identified.
+
+And the calibration term's convergence, for the H9 arm: loss +0.041 at 25 null
+replicates, +0.022 at 50, +0.013 at 100, +0.012 at 150. **It flattens exactly
+where these runs sit.** So the residual ~1 point is not something more null
+replicates buys cheaply — a more useful statement than the raw shortfall, and
+only visible once the terms are separated.
+
+*Every figure in the table above is from the run after the seeding fix
+described below; the pre-fix draft of this entry quoted three of them about
+0.002 differently, which is the size of the bug.*
+
+**Cross-check, because a decomposition of a published number has to reproduce
+it.** `m = 100` on a 200-replicate arm *is* `abstain.py`'s half-and-half
+protocol, so those rows must match the published control. They do, to within
+0.0028 across five arms and mostly to 0.0007. Asserted in
+`test_calib_size_reproduces_the_published_split_half_control` rather than
+eyeballed.
+
+### A reproducibility bug I introduced and caught within the hour
+
+The first version of `calib_size.py` used one shared `default_rng` across arms,
+so each arm's draws depended on how many arms preceded it. Adding the H9 arm
+moved an already-reported row by 0.004 — **a number in a document
+changing because an unrelated row was added below it.** Nothing would have
+flagged it: the audit checks that a document's number matches the JSON, and both
+had moved together.
+
+Fixed by deriving each arm's generator from a hash of its own label, so a row is
+reproducible on its own, and verified by re-running with an arm removed and
+checking every surviving row is bit-identical. That property is now a test.
+
+The general point is one I keep relearning in different costumes: a guardrail
+that compares a document to an artifact cannot catch a change that moves both.
+The three failure modes this weekend that no guardrail caught — the wrong
+comparison, the unregistered number, and now the order-dependent resample —
+share that shape.

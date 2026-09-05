@@ -296,6 +296,28 @@ def claims(d):
                 (f"n_boot={nb} control", "null_fdr_rankers",
                  f"{100 * v['heldout_alpha_0.05']['null_abstention_heldout']:.1f}%"),
             ]
+    # H9 and the grid/calibration decomposition.
+    nfb, abb = d.get("null_fdr_k5_model_b40"), d.get("abstain_k5_model_b40")
+    if nfb and abb:
+        m = abb["levels"]["alpha_0.05"]
+        out += [
+            ("H9 control", "abstain_k5_model_b40",
+             f"{100 * m['null_abstention_heldout']:.1f}%"),
+            ("H9 suspects", "abstain_k5_model_b40",
+             f"{m['real_reported_mean']:.2f}"),
+            ("H9 separation", "null_fdr_k5_model_b40",
+             f"{nfb['separation']['prob_real_max_exceeds_null_max']:.3f}"),
+        ]
+    cs = d.get("calib_size")
+    if cs:
+        for lab, v in (cs.get("arms") or {}).items():
+            m100 = v["curve"].get("100") or {}
+            out += [
+                (f"oracle: {lab}", "calib_size",
+                 f"{v['oracle_control']:.3f}"),
+                (f"calibration loss: {lab}", "calib_size",
+                 f"{m100.get('calibration_loss', float('nan')):+.3f}"),
+            ]
     sp = d.get("sparsity")
     if sp:
         for k in sp["caps"]:
@@ -355,7 +377,8 @@ def main():
              "abstain", "abstain_k5", "null_fdr_rankers", "invariance",
              "null_fdr_k5_model", "abstain_k5_model",
              "null_fdr_model", "abstain_model",
-             "attr_arm", "par_few", "sparsity"]
+             "attr_arm", "par_few", "sparsity",
+             "null_fdr_k5_model_b40", "abstain_k5_model_b40", "calib_size"]
     d = {n: load(runs, n) for n in names}
     missing = [n for n in names if d[n] is None]
 

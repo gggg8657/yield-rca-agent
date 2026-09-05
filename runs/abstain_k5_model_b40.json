@@ -1,0 +1,88 @@
+{
+  "protocol": {
+    "rule": "report suspect j iff its bootstrap support s_j >= tau(alpha), where tau(alpha) is the (1-alpha) quantile of max_j s_j over null replicates (Westfall-Young max-statistic, family-wise over the sensors screened)",
+    "calibration": "null replicates split in half; tau fitted on one half, all rates reported on the other; both directions averaged over 400 random partitions",
+    "why_split": "fitting tau and measuring abstention on the same replicates returns 1-alpha by construction and measures nothing",
+    "source": "runs/null_fdr_k5_model_b40.json",
+    "n_null": 200,
+    "n_real": 40,
+    "refits": 0,
+    "select_k": 5,
+    "n_boot": 40
+  },
+  "environment": {
+    "python": "3.11.15",
+    "numpy": "2.3.5",
+    "platform": "Linux-6.8.0-58-generic-x86_64-with-glibc2.39"
+  },
+  "no_rule_baseline": {
+    "null_abstention": 0.0,
+    "null_reported_mean": 2.79,
+    "real_reported_mean": 3.225,
+    "note": "the pipeline as it stands, with no abstention rule"
+  },
+  "null_structure": {
+    "n_eff_sensors": 474,
+    "null": {
+      "n_replicates_top5": 200,
+      "top5_pairwise_overlap": 0.015658291457286432,
+      "selected_pairwise_overlap": 0.004974994017707585,
+      "distinct_sensors_ever_named": 274
+    },
+    "real": {
+      "n_replicates_top5": 40,
+      "top5_pairwise_overlap": 0.671025641025641,
+      "selected_pairwise_overlap": 0.7496947496947495,
+      "distinct_sensors_ever_named": 7
+    },
+    "random_floor_top5": 0.010548523206751054,
+    "verdict": "null replicates agree with each other at 0.016, against a random floor of 0.011 and 0.671 on real labels -- indistinguishable from resampled noise, so the correlation-structure explanation does not hold"
+  },
+  "levels": {
+    "alpha_0.1": {
+      "alpha": 0.1,
+      "tau_mean": 0.588565625,
+      "tau_sd": 0.021822050389763793,
+      "tau_min": 0.5025000000000002,
+      "tau_max": 0.65,
+      "n_splits_evaluated": 800,
+      "fallback_reached_report_total": 0,
+      "fallback_reached_report_rate": 0.0,
+      "null_abstention_heldout": 0.8886624999999999,
+      "null_abstention_target": 0.9,
+      "null_false_discoveries_heldout": 0.11690000000000002,
+      "real_abstention": 0.0,
+      "real_reported_mean": 1.8225624999999996
+    },
+    "alpha_0.05": {
+      "alpha": 0.05,
+      "tau_mean": 0.6474906250000001,
+      "tau_sd": 0.03185923513187912,
+      "tau_min": 0.575,
+      "tau_max": 0.7012499999999999,
+      "n_splits_evaluated": 800,
+      "fallback_reached_report_total": 0,
+      "fallback_reached_report_rate": 0.0,
+      "null_abstention_heldout": 0.9417625000000001,
+      "null_abstention_target": 0.95,
+      "null_false_discoveries_heldout": 0.0632375,
+      "real_abstention": 0.0,
+      "real_reported_mean": 1.5507187500000001
+    },
+    "alpha_0.01": {
+      "alpha": 0.01,
+      "tau_mean": 0.7675821875000003,
+      "tau_sd": 0.0497647913706572,
+      "tau_min": 0.6502500000000001,
+      "tau_max": 0.82525,
+      "n_splits_evaluated": 800,
+      "fallback_reached_report_total": 0,
+      "fallback_reached_report_rate": 0.0,
+      "null_abstention_heldout": 0.9807875000000001,
+      "null_abstention_target": 0.99,
+      "null_false_discoveries_heldout": 0.020837500000000002,
+      "real_abstention": 0.0,
+      "real_reported_mean": 1.1155312500000003
+    }
+  }
+}

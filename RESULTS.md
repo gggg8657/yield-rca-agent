@@ -464,6 +464,45 @@ The account above says `n_boot` fixes the spacing of the attainable set. That is
 
 Two limits on what this settles, both of which are why the agent-loop version of the experiment is still worth running. These are univariate arms, not the loop. And with P(M = 1) = 0 throughout, they say nothing about the competing term: a finer grid helps only if saturation does not rise to meet it, and the loop's model-native attribution is the configuration where saturation was non-zero to begin with.
 
+### Does a finer grid reach nominal? (H9)
+
+The grid account predicts that raising `n_boot` refines the attainable set. Registered before the run: the refinement brings a value within 0.01 of 0.95, and measured control improves on 93.7%. Also registered was the competing possibility that P(M = 1) would *rise* with more resamples and push the top of the set back down, in which case the advice would have inverted to fewer resamples. Agent loop, `select_k = 5`, model attribution, `n_boot` the only change:
+
+| arm | P(M = 1) | attainable above 0.60 | best attainable (oracle) | measured control | suspects |
+|---|---|---|---|---|---|
+| `n_boot` = 12 (pre-registered) | 0.5% | 7 | 0.9350 | 93.7% | 1.34 |
+| `n_boot` = 40 | 0.0% | 19 | 0.9550 | 94.2% | 1.55 |
+
+**H9 holds on both halves, and the competing mechanism is refuted rather than merely absent.** P(M = 1) *fell* from 0.5% to 0.0%: with more resamples a noisy sensor gets more chances to be missed, and that dominates the averaging effect that would have pushed it the other way. So the two terms do not trade off here -- the finer grid is a free improvement, and the report gets longer rather than shorter while control improves.
+
+**What does not change is the comparison that carries the conclusion.** The univariate arm at the same `n_boot` = 40 and the same depth reaches 94.3% control while reporting 2.06 suspects. The loop reaches 94.2% reporting 1.55. Tuning `n_boot` moved the loop from clearly behind on error control to level on it, and left it behind on report length. The headline is unaffected.
+
+### Grid or calibration? Splitting the gap to nominal
+
+With `n_boot` fixed, the distance between nominal 0.95 and what the pipeline delivers has two sources: the **grid** may not contain a value at nominal, and the **calibration** estimates tau from a finite null. This separates them by resampling the per-replicate statistics already recorded -- no model is fitted anywhere in this section. The *oracle* is the attainable value closest to nominal, i.e. what an infinite calibration set would deliver; *measured* fits tau on 100 null replicates and scores the held-out remainder, which is `scripts/abstain.py`'s protocol.
+
+| arm | `n_boot` | oracle | grid gap | measured (m = 100) | calibration loss |
+|---|---|---|---|---|---|
+| univariate, select_k=5, n_boot=12 | 12 | 0.960 | -0.010 | 0.930 | +0.030 |
+| univariate, select_k=5, n_boot=40 | 40 | 0.950 | +0.000 | 0.942 | +0.008 |
+| univariate, select_k=5, n_boot=100 | 100 | 0.950 | +0.000 | 0.941 | +0.009 |
+| agent loop, select_k=5, model, n_boot=12 | 12 | 0.935 | +0.015 | 0.937 | -0.002 |
+| agent loop, select_k=5, model, n_boot=40 | 40 | 0.955 | -0.005 | 0.942 | +0.013 |
+| agent loop, select_k=5, permutation, n_boot=12 | 12 | 0.955 | -0.005 | 0.916 | +0.039 |
+
+Read the last two columns as the answer to *what should I spend on*. Where the grid gap is non-zero, more bootstrap resamples; where the calibration loss dominates, more null replicates. The two are different budgets and this repository had been conflating them under "the calibration is imperfect".
+
+And how fast the calibration term shrinks, for the arm H9 produced (agent loop, `select_k = 5`, model, `n_boot` = 40, oracle 0.955):
+
+| null replicates used to fit tau | control | sd over draws | calibration loss |
+|---|---|---|---|
+| 25 | 0.914 | 0.058 | +0.041 |
+| 50 | 0.933 | 0.041 | +0.022 |
+| 100 | 0.942 | 0.032 | +0.013 |
+| 150 | 0.943 | 0.040 | +0.012 |
+
+The loss roughly halves from 25 to 50 replicates and again to 100, then stops. At 200 null replicates -- what these runs use -- the split-half protocol fits tau on 100, which is where the curve flattens, so **the remaining gap to nominal is not something more null replicates would close cheaply.** That is a more useful statement than the raw shortfall, and it is only visible once the two terms are separated.
+
 ## What error control is achievable at all
 
 A suspect's bootstrap support is a count over `n_boot` resamples divided by `n_boot`, so the null max-statistic *M* lives on the grid {0, 1/`n_boot`, ..., 1}. Error control as a function of the threshold is therefore a **step function**, and only `n_boot` + 1 values of it are attainable no matter how alpha is chosen:

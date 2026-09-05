@@ -45,6 +45,7 @@ only on the synthetic generator, where its premise is true by construction.
 | **top-5 stability, loop with model-native attribution** | *[not measured]* | **35.3%** — +13.0 points for one config field | `runs/secom_stability.json` **(new)** |
 | **error control, loop with model-native attribution** (`select_k = 5`) | *[not measured]* | **93.7%**, reporting 1.34 suspects | `runs/abstain_k5_model.json` **(new)** |
 | **SECOM AUC, loop with model-native attribution** | *[not measured]* | **0.729 [0.710, 0.748]**, still −0.030 [−0.047, −0.013] below `rf_all` | `runs/attr_arm.json` **(new)** |
+| **best error control the loop reaches**, after tuning three parameters | *[not measured]* | **94.2%** on 1.55 suspects — against a univariate ranker's 94.3% on 2.06 | `runs/abstain_k5_model_b40.json` **(new)** |
 
 Nothing from Friday morning was re-run or revised. The two KPI verdicts stand:
 **AUC ≥ 0.75 met by the baseline, not by the agent loop; top-5 stability ≥ 80%
@@ -52,7 +53,7 @@ not met on any protocol.**
 
 ---
 
-## The twelve new results
+## The fourteen new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -524,6 +525,67 @@ It does **not** settle H9, which is running: these are univariate arms, and with
 P(M = 1) = 0 they say nothing about whether a finer grid still helps when
 saturation rises to meet it — which is precisely the agent loop's situation.
 
+### 13. H9 confirmed: `n_boot` = 40 reaches nominal, and the last knob changes nothing
+
+`n_boot` 12 → 40 on the agent loop at `select_k = 5` with model attribution,
+nothing else changed. 240 fits, 50 min.
+
+| | `n_boot` = 12 | `n_boot` = 40 |
+|---|---|---|
+| P(M = 1) | 0.5% | **0.0%** |
+| attainable values above 0.60 | 7 | **19** |
+| best attainable (oracle) | 0.9350 | **0.9550** |
+| measured control, α = 0.05 | 93.7% | **94.2%** |
+| suspects reported | 1.34 | **1.55** |
+| separation | 0.994 | **1.000** |
+
+Predicted before the run: an attainable value within 0.01 of 0.95 and control
+above 93.7%. Delivered 0.9550 and 94.2%. **Both halves hold.**
+
+The registered competing mechanism is *refuted*, not merely absent. I said
+P(M = 1) might **rise** with more resamples — a sensor selected 12/12 might also
+go 40/40 — in which case the advice would invert to fewer resamples. It **fell**
+(0.5% → 0.0%): more resamples give a noisy sensor more chances to be missed, and
+that dominates. So the finer grid is free — control up, report *longer*,
+separation to 1.000.
+
+**And the headline is untouched.** The univariate ranker at the same `n_boot` and
+depth: 94.3% control on 2.06 suspects. The loop: 94.2% on 1.55. **Three
+parameters have now been tuned in the loop's favour — attribution statistic,
+selection depth, bootstrap count — and on no axis does it finish ahead of
+ranking each sensor on its own.**
+
+### 14. The gap to nominal splits into two budgets
+
+Once the grid contains a nominal value, what is the rest of the shortfall?
+Answered by resampling statistics already on disk — no model fits.
+
+> gap to nominal = (nominal − oracle) *grid resolution* + (oracle − measured) *calibration noise*
+
+| arm | `n_boot` | oracle | grid gap | measured | calibration loss |
+|---|---|---|---|---|---|
+| univariate | 12 | 0.960 | −0.010 | 0.930 | **+0.030** |
+| univariate | 40 | 0.950 | +0.000 | 0.942 | +0.008 |
+| univariate | 100 | 0.950 | +0.000 | 0.941 | +0.009 |
+| agent, model | 12 | 0.935 | **+0.015** | 0.937 | −0.002 |
+| agent, model | 40 | 0.955 | −0.005 | 0.942 | +0.013 |
+| agent, permutation | 12 | 0.955 | −0.005 | 0.916 | **+0.039** |
+
+These are **different budgets** and the repo had been conflating them under
+"the calibration is imperfect". At `n_boot` = 12 with model attribution the grid
+binds (+0.015) and the calibration is already exact. With permutation
+attribution at the same `n_boot` the grid is *fine* and the calibration loses
+0.039 — **a noisier statistic makes τ harder to estimate, a third cost of the
+permutation estimator the repo had not identified.**
+
+Convergence for the H9 arm: loss +0.041 at 25 null replicates, +0.022 at 50,
++0.013 at 100, +0.012 at 150 — **flat exactly where these runs sit.** So the
+residual ~1 point is not something more null replicates buys cheaply.
+
+Cross-checked: `m = 100` on a 200-replicate arm *is* `abstain.py`'s protocol, and
+those rows reproduce the published control to within 0.003 across six arms.
+Asserted in a test, not eyeballed.
+
 ---
 
 ## What I tried that did not work, and what it rules out
@@ -653,30 +715,14 @@ is still open — it needs a call, not more measurement.
 scripts/jobs.sh          # one line per job; flags a dead one as STALE
 ```
 
-| job | started | expect | state |
-|---|---|---|---|
-| **H9** — `null_fdr.py --select-k 5 --attribution model --n-boot 40` | 03:18 Sat | `runs/null_fdr_k5_model_b40.json` + `runs/abstain_k5_model_b40.json`, ~1 h | `scripts/jobs.sh`, or `tail -5 runs/null_fdr_b40.log`; the log ends with `H9 DONE` |
+**Nothing is running.** H9 finished at 04:08 (50 min). `git status` clean,
+`scripts/report.py --check` in sync, `scripts/audit_weekend.py` traces 121
+numeric claims here to 18 run JSONs, 48 tests pass.
 
-**A warning about that job, and about how I was checking jobs all weekend.** I
-launched H9 at ~22:30 Friday. It died silently, and I did not notice, because
-the tail of its log read exactly like a healthy just-started run — the last line
-joblib prints before its first progress report is identical whether the job
-started 90 seconds ago or died five hours ago. **Roughly five hours of wall
-clock produced nothing.** The run above is a relaunch.
-
-The fix is in `scripts/runjob.sh`: it wraps a long job and stamps
-`<log>.status` with a start time and a heartbeat every 5 seconds, so a stale
-log is *visibly* stale rather than merely quiet. `scripts/jobs.sh` prints one
-line per job and marks any RUNNING row whose heartbeat is over a minute old as
-`STALE, job is dead`. Use it instead of `tail` for liveness. H9 itself predates
-the wrapper and is being observed by an attached watcher, so its row says so.
-
-**H9's prediction, registered before the run** (`critique_log.md` Turn 12):
-raising `n_boot` from 12 to 40 brings an attainable value within 0.01 of 0.95
-and moves measured control above the current 93.7%. Result 12 confirms the
-*spacing* half of the mechanism on univariate arms where saturation is zero;
-H9 asks whether it survives when `P(M = 1)` can rise at the same time, which is
-the loop's situation and genuinely uncertain.
+A caution carried forward from Friday night: I lost ~5 hours to a launch that
+died silently, because the tail of its log read exactly like a healthy
+just-started run. `scripts/runjob.sh` now stamps a heartbeat and
+`scripts/jobs.sh` marks a stale one dead. Use those, not `tail`, for liveness.
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
 (11 stages, CPU only, 16 workers). Tests: **41 collected, all green** as of the

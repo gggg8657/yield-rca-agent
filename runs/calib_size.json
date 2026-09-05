@@ -1,0 +1,340 @@
+{
+  "protocol": {
+    "question": "Split the gap between nominal control and delivered control into a grid term and a calibration term.",
+    "source": "per-replicate max_stability already recorded by null_fdr_rankers.py and null_fdr.py; no model is fitted here",
+    "oracle": "the attainable grid value closest to nominal -- what an infinite calibration set would deliver. Closest rather than largest, because overshooting nominal costs power on real labels.",
+    "measured": "fit tau on m null replicates, evaluate on the held-out remainder, averaged over 2000 draws",
+    "alpha": 0.05,
+    "nominal": 0.95,
+    "reps": 2000,
+    "seed": 0,
+    "cross_check": "m=100 on a 200-replicate arm is abstain.py's half-and-half protocol, so those rows should reproduce its published control"
+  },
+  "environment": {
+    "python": "3.11.15",
+    "numpy": "2.3.5"
+  },
+  "sizes": [
+    25,
+    50,
+    100,
+    150
+  ],
+  "arms": {
+    "univariate, select_k=5, n_boot=12": {
+      "n_boot": 12,
+      "n_null_replicates": 200,
+      "p_saturated": 0.0,
+      "attainable_above_060": [
+        1.0,
+        0.995,
+        0.96,
+        0.915,
+        0.835,
+        0.71
+      ],
+      "oracle_control": 0.96,
+      "grid_gap": -0.010000000000000009,
+      "curve": {
+        "25": {
+          "m": 25,
+          "control_mean": 0.8957371428571429,
+          "control_sd": 0.06955357618544264,
+          "n_heldout": 175,
+          "calibration_loss": 0.06426285714285707
+        },
+        "50": {
+          "m": 50,
+          "control_mean": 0.9174033333333332,
+          "control_sd": 0.05038533734021458,
+          "n_heldout": 150,
+          "calibration_loss": 0.04259666666666673
+        },
+        "100": {
+          "m": 100,
+          "control_mean": 0.9300800000000001,
+          "control_sd": 0.03948129919966218,
+          "n_heldout": 100,
+          "calibration_loss": 0.029919999999999836
+        },
+        "150": {
+          "m": 150,
+          "control_mean": 0.9184100000000001,
+          "control_sd": 0.04089141662961786,
+          "n_heldout": 50,
+          "calibration_loss": 0.041589999999999905
+        }
+      }
+    },
+    "univariate, select_k=5, n_boot=40": {
+      "n_boot": 40,
+      "n_null_replicates": 200,
+      "p_saturated": 0.0,
+      "attainable_above_060": [
+        1.0,
+        0.995,
+        0.985,
+        0.97,
+        0.96,
+        0.95,
+        0.94,
+        0.935,
+        0.905,
+        0.89,
+        0.88,
+        0.845,
+        0.8049999999999999,
+        0.785,
+        0.75,
+        0.6799999999999999
+      ],
+      "oracle_control": 0.95,
+      "grid_gap": 0.0,
+      "curve": {
+        "25": {
+          "m": 25,
+          "control_mean": 0.9131457142857143,
+          "control_sd": 0.05993403274330145,
+          "n_heldout": 175,
+          "calibration_loss": 0.03685428571428562
+        },
+        "50": {
+          "m": 50,
+          "control_mean": 0.9311866666666665,
+          "control_sd": 0.04040059314150369,
+          "n_heldout": 150,
+          "calibration_loss": 0.01881333333333346
+        },
+        "100": {
+          "m": 100,
+          "control_mean": 0.942135,
+          "control_sd": 0.033535862923906166,
+          "n_heldout": 100,
+          "calibration_loss": 0.007865000000000011
+        },
+        "150": {
+          "m": 150,
+          "control_mean": 0.94318,
+          "control_sd": 0.03866568397893381,
+          "n_heldout": 50,
+          "calibration_loss": 0.006819999999999937
+        }
+      }
+    },
+    "univariate, select_k=5, n_boot=100": {
+      "n_boot": 100,
+      "n_null_replicates": 200,
+      "p_saturated": 0.0,
+      "attainable_above_060": [
+        1.0,
+        0.995,
+        0.985,
+        0.97,
+        0.965,
+        0.96,
+        0.955,
+        0.95,
+        0.945,
+        0.94,
+        0.935,
+        0.915,
+        0.9,
+        0.895,
+        0.89,
+        0.885,
+        0.865,
+        0.84,
+        0.825,
+        0.8049999999999999,
+        0.775,
+        0.75,
+        0.72,
+        0.71,
+        0.685,
+        0.6699999999999999,
+        0.655,
+        0.615
+      ],
+      "oracle_control": 0.95,
+      "grid_gap": 0.0,
+      "curve": {
+        "25": {
+          "m": 25,
+          "control_mean": 0.9161485714285714,
+          "control_sd": 0.05639175455984773,
+          "n_heldout": 175,
+          "calibration_loss": 0.03385142857142853
+        },
+        "50": {
+          "m": 50,
+          "control_mean": 0.93487,
+          "control_sd": 0.038720213709341415,
+          "n_heldout": 150,
+          "calibration_loss": 0.015129999999999977
+        },
+        "100": {
+          "m": 100,
+          "control_mean": 0.941355,
+          "control_sd": 0.03237496013931152,
+          "n_heldout": 100,
+          "calibration_loss": 0.008644999999999903
+        },
+        "150": {
+          "m": 150,
+          "control_mean": 0.9466600000000001,
+          "control_sd": 0.03819389724672577,
+          "n_heldout": 50,
+          "calibration_loss": 0.0033399999999998986
+        }
+      }
+    },
+    "agent loop, select_k=5, model, n_boot=12": {
+      "n_boot": 12,
+      "n_null_replicates": 200,
+      "p_saturated": 0.005,
+      "attainable_above_060": [
+        0.995,
+        0.99,
+        0.965,
+        0.935,
+        0.905,
+        0.8049999999999999,
+        0.655
+      ],
+      "oracle_control": 0.935,
+      "grid_gap": 0.014999999999999902,
+      "curve": {
+        "25": {
+          "m": 25,
+          "control_mean": 0.8978542857142856,
+          "control_sd": 0.07684565478921403,
+          "n_heldout": 175,
+          "calibration_loss": 0.03714571428571445
+        },
+        "50": {
+          "m": 50,
+          "control_mean": 0.9226733333333332,
+          "control_sd": 0.052672746993151685,
+          "n_heldout": 150,
+          "calibration_loss": 0.012326666666666819
+        },
+        "100": {
+          "m": 100,
+          "control_mean": 0.93726,
+          "control_sd": 0.03399956448533709,
+          "n_heldout": 100,
+          "calibration_loss": -0.0022599999999999287
+        },
+        "150": {
+          "m": 150,
+          "control_mean": 0.93256,
+          "control_sd": 0.03514062936140952,
+          "n_heldout": 50,
+          "calibration_loss": 0.0024400000000001087
+        }
+      }
+    },
+    "agent loop, select_k=5, model, n_boot=40": {
+      "n_boot": 40,
+      "n_null_replicates": 200,
+      "p_saturated": 0.0,
+      "attainable_above_060": [
+        1.0,
+        0.995,
+        0.99,
+        0.985,
+        0.98,
+        0.975,
+        0.96,
+        0.955,
+        0.94,
+        0.925,
+        0.89,
+        0.87,
+        0.835,
+        0.815,
+        0.79,
+        0.75,
+        0.69,
+        0.645,
+        0.605
+      ],
+      "oracle_control": 0.955,
+      "grid_gap": -0.0050000000000000044,
+      "curve": {
+        "25": {
+          "m": 25,
+          "control_mean": 0.9143228571428572,
+          "control_sd": 0.05844593221146757,
+          "n_heldout": 175,
+          "calibration_loss": 0.040677142857142745
+        },
+        "50": {
+          "m": 50,
+          "control_mean": 0.9330966666666666,
+          "control_sd": 0.041116235441159624,
+          "n_heldout": 150,
+          "calibration_loss": 0.021903333333333386
+        },
+        "100": {
+          "m": 100,
+          "control_mean": 0.94242,
+          "control_sd": 0.03248031843351863,
+          "n_heldout": 100,
+          "calibration_loss": 0.012579999999999925
+        },
+        "150": {
+          "m": 150,
+          "control_mean": 0.9428799999999999,
+          "control_sd": 0.03958900408727542,
+          "n_heldout": 50,
+          "calibration_loss": 0.01212000000000002
+        }
+      }
+    },
+    "agent loop, select_k=5, permutation, n_boot=12": {
+      "n_boot": 12,
+      "n_null_replicates": 200,
+      "p_saturated": 0.0,
+      "attainable_above_060": [
+        1.0,
+        0.995,
+        0.955,
+        0.875,
+        0.625
+      ],
+      "oracle_control": 0.955,
+      "grid_gap": -0.0050000000000000044,
+      "curve": {
+        "25": {
+          "m": 25,
+          "control_mean": 0.8633771428571428,
+          "control_sd": 0.11014046300705271,
+          "n_heldout": 175,
+          "calibration_loss": 0.09162285714285712
+        },
+        "50": {
+          "m": 50,
+          "control_mean": 0.9020666666666667,
+          "control_sd": 0.06337019191974493,
+          "n_heldout": 150,
+          "calibration_loss": 0.05293333333333328
+        },
+        "100": {
+          "m": 100,
+          "control_mean": 0.916215,
+          "control_sd": 0.05543970197681115,
+          "n_heldout": 100,
+          "calibration_loss": 0.03878499999999996
+        },
+        "150": {
+          "m": 150,
+          "control_mean": 0.89841,
+          "control_sd": 0.06237641628575922,
+          "n_heldout": 50,
+          "calibration_loss": 0.05658999999999992
+        }
+      }
+    }
+  }
+}
