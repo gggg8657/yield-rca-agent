@@ -1820,3 +1820,65 @@ do at `n_boot` = 12.
 the bootstrap work of the `n_boot` = 12 arm, so roughly an hour. The
 `--n-boot` flag is a two-line addition of the same shape as `--select-k` and
 `--attribution`; nothing already measured is recomputed.
+
+---
+
+## Turn 13 (2026-09-05) — a free confirmation, and five hours I lost to bad orchestration
+
+### The orchestration failure first, because it cost more than anything I did
+
+I launched H9 at ~22:30 with `setsid nohup /tmp/h9.sh &`. Checking this turn at
+03:19, the running process (PID 151588, parent `/tmp/h9.sh` PID 151586) has a
+start time of **03:18:13** — two minutes old — and `runs/null_fdr_b40.log`
+contains only the three header lines, rewritten at 03:18. The original launch
+did not survive, and no output JSON was ever written. Roughly **five hours of
+wall clock produced nothing**, and I did not notice at the time because the tail
+of the log looked exactly the way a healthy just-started run looks.
+
+That last clause is the actual lesson. A log whose final line is
+`Using backend LokyBackend with 16 concurrent workers` is indistinguishable
+between "started 90 seconds ago" and "died 5 hours ago", and I have been using
+`tail` on these logs as my only liveness check all weekend. The fix is not more
+diligence, it is making the artifact carry the information: every long runner
+should stamp its start time and heartbeat, so a stale log is visibly stale.
+Added below.
+
+I am recording this as prominently as a result because the weekend's throughput
+is bounded by the queue actually running, and I had no detector for the queue
+being empty.
+
+### Result: `n_boot` is the resolution knob, confirmed at zero compute
+
+While H9 re-runs, the same mechanism turned out to be testable from data already
+on disk. `runs/null_fdr_rankers.json` holds three `univariate` arms at
+`select_k = 5` differing **only** in `n_boot` — a ladder run for a different
+question and never read this way.
+
+| `n_boot` | P(M = 1) | attainable values above 0.60 | closest to 0.95 | measured control |
+|---|---|---|---|---|
+| 12 | 0.0% | 6 | 0.960 | 93.0% |
+| 40 | 0.0% | 16 | **0.950** | 94.3% |
+| 100 | 0.0% | 28 | **0.950** | 94.1% |
+
+The grid refines monotonically and nominal 0.95 goes from unreachable at
+`n_boot` = 12 to exactly attainable from 40 onward, with measured control
+following. **And these arms isolate the mechanism**: P(M = 1) = 0 for all three,
+so the saturation term is absent and what is left is pure spacing. That is a
+cleaner test of the spacing claim than H9 itself can provide, because H9's arm
+has both terms moving at once.
+
+The diminishing return is the practically useful half: 40 → 100 costs 2.5x and
+moves control 94.3% → 94.1%, backwards within noise. So the advice is "12 is too
+coarse to express a 95% target, 40 is enough", not "more is better".
+
+**What this does not settle, and why H9 still matters.** These are univariate
+arms with zero saturation. The whole open question is whether a finer grid helps
+when P(M = 1) rises to meet it, and the loop's model-native configuration is
+exactly where saturation was non-zero. H9's prediction stands as written.
+
+I should also say plainly what kind of result this is. It is not a new
+experiment; it is a re-reading of a run that had been sitting in `runs/` for a
+day, and the reason it was available is that `null_fdr_rankers.py` recorded
+per-replicate `max_stability` rather than only summaries. The habit of storing
+per-replicate records instead of aggregates is what made a free confirmation
+possible, and that is worth more than the confirmation.

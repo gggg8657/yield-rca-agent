@@ -417,3 +417,47 @@ def test_attainable_control_is_a_grid_set_by_n_boot():
     assert ties >= 1, "expected at least one exact tie to explain"
 
 
+
+
+def test_n_boot_refines_the_attainable_grid():
+    """More resamples => strictly more attainable control values.
+
+    The `RESULTS.md` claim that `n_boot` sets the resolution of error control
+    rests on a ladder of three univariate arms in `runs/null_fdr_rankers.json`
+    that differ only in `n_boot`. Pinned here so that re-running that script
+    with different settings cannot silently invalidate the paragraph.
+
+    Only the *refinement* is asserted, not that control improves: measured
+    control went 93.0% -> 94.3% -> 94.1%, so the third rung is flat-to-
+    backwards and asserting improvement would be asserting noise.
+    """
+    import json
+
+    src = ROOT / "runs" / "null_fdr_rankers.json"
+    if not src.exists():                                    # pragma: no cover
+        return
+    d = json.loads(src.read_text())
+    per, recs = d["per_ranker"], d["records"]
+    fam = sorted(((k, v) for k, v in per.items()
+                  if v.get("is_variant") and v.get("select_k") == 5
+                  and v.get("ranker") == "univariate"),
+                 key=lambda kv: kv[1]["n_boot"])
+    assert len(fam) >= 3, "expected an n_boot ladder of at least three arms"
+
+    counts, nears = [], []
+    for name, v in fam:
+        nb = v["n_boot"]
+        mx = np.asarray([r["max_stability"] for r in recs
+                         if r["arm"] == name and r["permuted"]], dtype=float)
+        assert len(mx), f"no null replicates recorded for {name}"
+        ach = sorted({float(1.0 - (mx >= k / nb).mean())
+                      for k in range(1, nb + 1)})
+        counts.append(len([a for a in ach if a > 0.60]))
+        nears.append(min(abs(a - 0.95) for a in ach))
+
+    assert all(counts[i] < counts[i + 1] for i in range(len(counts) - 1)), (
+        f"attainable-set sizes {counts} are not strictly increasing in "
+        f"n_boot, so the resolution claim in RESULTS.md no longer holds")
+    # Nominal must go from unreachable at the coarsest rung to exact later.
+    assert nears[0] > 1e-9, "0.95 was already attainable at the coarsest rung"
+    assert min(nears[1:]) < 1e-9, "0.95 never became exactly attainable"

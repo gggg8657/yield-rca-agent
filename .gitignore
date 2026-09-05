@@ -9,3 +9,5 @@ data/
 secom.zip
 runs/*.log
 .heartbeat_*
+
+runs/*.log.status

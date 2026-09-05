@@ -2043,6 +2043,95 @@ def sec_sparsity(sp):
     return body
 
 
+def sec_nboot_grid(rk):
+    """Does raising `n_boot` refine the attainable set? Measured, at no cost.
+
+    The grid account says `n_boot` sets the resolution of error control. That
+    is testable without a single new fit, because `runs/null_fdr_rankers.json`
+    already contains three arms differing *only* in `n_boot` -- a ladder run
+    for a different purpose months of turns ago and never read this way.
+
+    These arms also isolate the effect. P(M = 1) is zero for all three, so the
+    saturation term that complicates the agent-loop arms is absent and what is
+    left is pure spacing.
+    """
+    if not rk:
+        return []
+    import numpy as np
+
+    per = rk.get("per_ranker") or {}
+    recs = rk.get("records") or []
+    fam = [(k, v) for k, v in per.items()
+           if v.get("is_variant") and v.get("select_k") == 5
+           and v.get("ranker") == "univariate"]
+    fam.sort(key=lambda kv: kv[1]["n_boot"])
+    if len(fam) < 3:
+        return []
+    rows, sats, counts, nears = [], [], [], []
+    for name, v in fam:
+        nb = v["n_boot"]
+        mx = np.asarray([r["max_stability"] for r in recs
+                         if r["arm"] == name and r["permuted"]], dtype=float)
+        if not len(mx):
+            continue
+        ach = sorted({float(1.0 - (mx >= k / nb).mean())
+                      for k in range(1, nb + 1)}, reverse=True)
+        n_hi = len([a for a in ach if a > 0.60])
+        near = min(ach, key=lambda a: abs(a - 0.95))
+        sat = float((mx >= 1.0).mean())
+        ctl = v["heldout_alpha_0.05"]["null_abstention_heldout"]
+        sats.append(sat)
+        counts.append(n_hi)
+        nears.append(near)
+        rows.append([str(nb), pct(sat), str(n_hi),
+                     f"{near:.3f}" + (" **(exactly nominal)**"
+                                      if abs(near - 0.95) < 1e-9 else ""),
+                     pct(ctl)])
+    if len(rows) < 3:
+        return []
+    refines = all(counts[i] < counts[i + 1] for i in range(len(counts) - 1))
+    body = [
+        "### Does `n_boot` set the resolution? (measured on a ladder already "
+        "in `runs/`)", "",
+        "The account above says `n_boot` fixes the spacing of the attainable "
+        "set. That is checkable with no new fits: `runs/null_fdr_rankers.json` "
+        "already holds three `univariate` arms at `select_k = 5` differing "
+        "**only** in `n_boot`, run for a different question and never read "
+        "this way. They also isolate the effect -- P(M = 1) is zero for all "
+        "three, so the saturation term that complicates the agent-loop arms is "
+        "absent and what remains is pure spacing.", "",
+        table(rows, ["`n_boot`", "P(M = 1)", "attainable values above 0.60",
+                     "closest attainable to 0.95",
+                     "measured control (alpha = 0.05)"]), "",
+    ]
+    if refines:
+        body += [
+            f"**The grid refines monotonically** -- "
+            f"{' to '.join(str(c) for c in counts)} attainable values above "
+            f"0.60 -- and nominal 0.95 goes from unreachable at `n_boot` = "
+            f"{fam[0][1]['n_boot']} (closest {nears[0]:.3f}) to **exactly "
+            f"attainable** from `n_boot` = {fam[1][1]['n_boot']} onward. "
+            f"Measured control follows: {rows[0][4]} to {rows[1][4]}.", "",
+            f"**And the return stops.** Going from "
+            f"{fam[1][1]['n_boot']} to {fam[2][1]['n_boot']} resamples "
+            f"multiplies the work by "
+            f"{fam[2][1]['n_boot'] / fam[1][1]['n_boot']:.1f}x, adds "
+            f"{counts[2] - counts[1]} more attainable values, and moves "
+            f"measured control from {rows[1][4]} to {rows[2][4]} -- backwards, "
+            f"within noise. So the practical reading is that `n_boot` = "
+            f"{fam[0][1]['n_boot']} is too coarse to express a 95% target and "
+            f"{fam[1][1]['n_boot']} is enough, not that more is better.", "",
+            "Two limits on what this settles, both of which are why the "
+            "agent-loop version of the experiment is still worth running. "
+            "These are univariate arms, not the loop. And with P(M = 1) = 0 "
+            "throughout, they say nothing about the competing term: a finer "
+            "grid helps only if saturation does not rise to meet it, and the "
+            "loop's model-native attribution is the configuration where "
+            "saturation was non-zero to begin with.", "",
+        ]
+    return body
+
+
 def sec_saturation(pairs):
     """What error control is *achievable* at all, and why the levels coincide.
 
@@ -2937,6 +3026,7 @@ def build(runs: Path):
     L += sec_ranker_fdr(rk)
     L += sec_depth(ab, ab5, rk, nf, nf5)
     L += sec_attribution_fdr(nf, ab, nf5, ab5, nfm, abm, nf5m, ab5m, rk)
+    L += sec_nboot_grid(rk)
     L += sec_saturation([
         ("agent, `select_k = 40`, permutation", nf, ab),
         ("agent, `select_k = 40`, **model**", nfm, abm),

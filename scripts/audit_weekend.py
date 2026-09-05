@@ -270,6 +270,32 @@ def claims(d):
                 ]
         out.append(("H7 n_selected", "attr_arm",
                     f"{aa['n_selected_mean']:.1f}"))
+    # The n_boot ladder read out of the ranker run: attainable-set sizes and
+    # the closest-to-nominal value, both recomputed from its own records.
+    if rk and rk.get("records"):
+        import numpy as _np
+        fam = sorted(((k, v) for k, v in (rk.get("per_ranker") or {}).items()
+                      if v.get("is_variant") and v.get("select_k") == 5
+                      and v.get("ranker") == "univariate"),
+                     key=lambda kv: kv[1]["n_boot"])
+        for name, v in fam:
+            nb = v["n_boot"]
+            mx = _np.asarray([r["max_stability"] for r in rk["records"]
+                              if r["arm"] == name and r["permuted"]],
+                             dtype=float)
+            if not len(mx):
+                continue
+            ach = sorted({float(1.0 - (mx >= k / nb).mean())
+                          for k in range(1, nb + 1)}, reverse=True)
+            near = min(ach, key=lambda a: abs(a - 0.95))
+            out += [
+                (f"n_boot={nb} attainable count", "null_fdr_rankers",
+                 f"| {nb} | 0.0% | {len([a for a in ach if a > 0.60])} |"),
+                (f"n_boot={nb} closest to nominal", "null_fdr_rankers",
+                 f"{near:.3f}"),
+                (f"n_boot={nb} control", "null_fdr_rankers",
+                 f"{100 * v['heldout_alpha_0.05']['null_abstention_heldout']:.1f}%"),
+            ]
     sp = d.get("sparsity")
     if sp:
         for k in sp["caps"]:

@@ -448,6 +448,22 @@ Swapping the statistic closes most of the error-control gap -- +0.6 points remai
 
 So the conclusion narrows rather than reverses. The loop still does not *beat* a univariate ranker on any axis measured here. But the claim that it is comprehensively worse was resting on a configuration whose attribution statistic was the weakest part of it, and with that one field changed two of the three gaps are small. What the loop buys for the remaining cost is still nothing measurable, which is the finding; what it costs is now much less than the pre-registered operating point suggested.
 
+### Does `n_boot` set the resolution? (measured on a ladder already in `runs/`)
+
+The account above says `n_boot` fixes the spacing of the attainable set. That is checkable with no new fits: `runs/null_fdr_rankers.json` already holds three `univariate` arms at `select_k = 5` differing **only** in `n_boot`, run for a different question and never read this way. They also isolate the effect -- P(M = 1) is zero for all three, so the saturation term that complicates the agent-loop arms is absent and what remains is pure spacing.
+
+| `n_boot` | P(M = 1) | attainable values above 0.60 | closest attainable to 0.95 | measured control (alpha = 0.05) |
+|---|---|---|---|---|
+| 12 | 0.0% | 6 | 0.960 | 93.0% |
+| 40 | 0.0% | 16 | 0.950 **(exactly nominal)** | 94.3% |
+| 100 | 0.0% | 28 | 0.950 **(exactly nominal)** | 94.1% |
+
+**The grid refines monotonically** -- 6 to 16 to 28 attainable values above 0.60 -- and nominal 0.95 goes from unreachable at `n_boot` = 12 (closest 0.960) to **exactly attainable** from `n_boot` = 40 onward. Measured control follows: 93.0% to 94.3%.
+
+**And the return stops.** Going from 40 to 100 resamples multiplies the work by 2.5x, adds 12 more attainable values, and moves measured control from 94.3% to 94.1% -- backwards, within noise. So the practical reading is that `n_boot` = 12 is too coarse to express a 95% target and 40 is enough, not that more is better.
+
+Two limits on what this settles, both of which are why the agent-loop version of the experiment is still worth running. These are univariate arms, not the loop. And with P(M = 1) = 0 throughout, they say nothing about the competing term: a finer grid helps only if saturation does not rise to meet it, and the loop's model-native attribution is the configuration where saturation was non-zero to begin with.
+
 ## What error control is achievable at all
 
 A suspect's bootstrap support is a count over `n_boot` resamples divided by `n_boot`, so the null max-statistic *M* lives on the grid {0, 1/`n_boot`, ..., 1}. Error control as a function of the threshold is therefore a **step function**, and only `n_boot` + 1 values of it are attainable no matter how alpha is chosen:

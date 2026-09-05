@@ -52,7 +52,7 @@ not met on any protocol.**
 
 ---
 
-## The eleven new results
+## The twelve new results
 
 ### 1. The loop invents root causes, and not for the reason the code suggests
 
@@ -494,6 +494,36 @@ answer.
 its headline metrics, and neither was ever tuned or discussed.** That is the
 most useful thing to come out of the last two turns.
 
+### 12. `n_boot` really is the resolution knob — confirmed from a run already on disk
+
+Result 11 said error control lives on a grid whose spacing is `1/n_boot`. That
+is testable with **no new fits**: `runs/null_fdr_rankers.json` already held
+three `univariate` arms at `select_k = 5` differing *only* in `n_boot`, run
+months of turns ago for a different question and never read this way.
+
+| `n_boot` | P(M = 1) | attainable values above 0.60 | closest attainable to 0.95 | measured control |
+|---|---|---|---|---|
+| 12 | 0.0% | 6 | 0.960 | 93.0% |
+| 40 | 0.0% | 16 | **0.950** | 94.3% |
+| 100 | 0.0% | 28 | **0.950** | 94.1% |
+
+**The grid refines monotonically (6 → 16 → 28) and nominal 0.95 goes from
+unreachable at `n_boot` = 12 to exactly attainable from 40 onward.** Measured
+control follows, 93.0% → 94.3%.
+
+These arms also *isolate* the effect: P(M = 1) is zero for all three, so the
+saturation term is absent and what is left is pure spacing.
+
+**And the return stops.** 40 → 100 costs 2.5x the work, adds 12 attainable
+values, and moves control 94.3% → 94.1% — backwards, within noise. The
+practical reading is "12 is too coarse to express a 95% target, 40 is enough",
+not "more is better".
+
+This is the cheapest result of the weekend and it came from re-reading a JSON.
+It does **not** settle H9, which is running: these are univariate arms, and with
+P(M = 1) = 0 they say nothing about whether a finer grid still helps when
+saturation rises to meet it — which is precisely the agent loop's situation.
+
 ---
 
 ## What I tried that did not work, and what it rules out
@@ -619,25 +649,34 @@ is still open — it needs a call, not more measurement.
 
 ## Still running / how to check
 
-**Nothing is running.** `git status` clean, `scripts/report.py --check` in sync,
-`scripts/audit_weekend.py` traces 97 numeric claims in this file to 15 run
-JSONs, 45 tests pass.
+```bash
+scripts/jobs.sh          # one line per job; flags a dead one as STALE
+```
 
-The next experiment, written down but not run, follows directly from result 11:
+| job | started | expect | state |
+|---|---|---|---|
+| **H9** — `null_fdr.py --select-k 5 --attribution model --n-boot 40` | 03:18 Sat | `runs/null_fdr_k5_model_b40.json` + `runs/abstain_k5_model_b40.json`, ~1 h | `scripts/jobs.sh`, or `tail -5 runs/null_fdr_b40.log`; the log ends with `H9 DONE` |
 
-> **H9.** If error control is limited by the resolution of a 12-point grid,
-> raising `n_boot` should refine the grid and let a nominal level be reached.
-> Concretely: `null_fdr.py --n-boot 40 --select-k 5 --attribution model` should
-> produce an attainable set containing a value within 0.01 of 0.95, where the
-> `n_boot = 12` version's closest is 0.935.
+**A warning about that job, and about how I was checking jobs all weekend.** I
+launched H9 at ~22:30 Friday. It died silently, and I did not notice, because
+the tail of its log read exactly like a healthy just-started run — the last line
+joblib prints before its first progress report is identical whether the job
+started 90 seconds ago or died five hours ago. **Roughly five hours of wall
+clock produced nothing.** The run above is a relaunch.
 
-That is a real prediction and it may well fail — the grid refines, but
-`P(M = 1)` may also *rise* with more resamples if a sensor that is selected in
-12 of 12 is also selected in 40 of 40, which would push the top of the set down
-even as its spacing improves. Those two effects run in opposite directions and
-which dominates is not something this repo has measured. `null_fdr.py` has no
-`--n-boot` flag yet; adding one is a two-line change of the same shape as
-`--select-k` and `--attribution`.
+The fix is in `scripts/runjob.sh`: it wraps a long job and stamps
+`<log>.status` with a start time and a heartbeat every 5 seconds, so a stale
+log is *visibly* stale rather than merely quiet. `scripts/jobs.sh` prints one
+line per job and marks any RUNNING row whose heartbeat is over a minute old as
+`STALE, job is dead`. Use it instead of `tail` for liveness. H9 itself predates
+the wrapper and is being observed by an attached watcher, so its row says so.
+
+**H9's prediction, registered before the run** (`critique_log.md` Turn 12):
+raising `n_boot` from 12 to 40 brings an attainable value within 0.01 of 0.95
+and moves measured control above the current 93.7%. Result 12 confirms the
+*spacing* half of the mechanism on univariate arms where saturation is zero;
+H9 asks whether it survives when `P(M = 1)` can rise at the same time, which is
+the loop's situation and genuinely uncertain.
 
 Reproduce everything: `bash scripts/overnight.sh ~/miniforge3/envs/pybamm-inv/bin/python`
 (11 stages, CPU only, 16 workers). Tests: **41 collected, all green** as of the
